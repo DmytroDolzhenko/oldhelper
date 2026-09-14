@@ -1,0 +1,16 @@
+{
+  "name": "rust-telegram-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "check": "node --check src/server.js && node --check src/storage.js && node --check src/rustplus-listener.js && node --check src/telegram.js"
+  },
+  "dependencies": {
+    "@liamcottle/rustplus.js": "^2.5.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

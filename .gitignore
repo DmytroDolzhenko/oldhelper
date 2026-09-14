@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+data.json
+rustplus.config.json
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+# Runtime / cache
+.cache/
+.tmp/
+tmp/
+*.pid
+*.seed
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+# Deployment output
+dist/
+build/
+coverage/
