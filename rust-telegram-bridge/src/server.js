@@ -235,9 +235,14 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(port, async () => {
+server.listen(port, () => {
   console.log(`Rust Telegram Bridge listening on :${port}`);
-  await rustPlus.sync().catch((error) => console.error('Rust+ sync failed:', error));
+  
+  console.log('[Rust+] Initializing listener and syncing with database...');
+  rustPlus.sync()
+    .then(() => console.log('[Rust+] Initial sync complete.'))
+    .catch((error) => console.error('[Rust+] Sync failed on startup:', error));
+
   startTelegramPolling().catch((error) => console.error('Telegram polling crashed:', error));
 });
 
