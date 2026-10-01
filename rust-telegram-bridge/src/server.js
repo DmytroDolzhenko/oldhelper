@@ -33,6 +33,7 @@ const port = Number(process.env.PORT || 3000);
 const telegramMode = process.env.TELEGRAM_MODE || 'polling';
 let pollingOffset = Number(process.env.TELEGRAM_POLLING_OFFSET || 0) || undefined;
 let pollingRunning = false;
+const fcmMemoryLimitMb = Number(process.env.FCM_MEMORY_LIMIT_MB || 180);
 
 const storage = createStorageFromEnv();
 const telegram = new Telegram(process.env.TELEGRAM_BOT_TOKEN);
@@ -49,6 +50,17 @@ const pairingListener = new PairingListener({
   configFile: process.env.RUSTPLUS_CONFIG_FILE || './rustplus.config.json',
   onPairing: saveAutomaticPairing
 });
+
+const fcmMemoryGuard = setInterval(() => {
+  const heapMb = process.memoryUsage().heapUsed / 1024 / 1024;
+  if (pairingListener.getStatus().status === 'connected' && heapMb > fcmMemoryLimitMb) {
+    console.error(`Stopping Rust+ FCM listener at ${Math.round(heapMb)} MB to keep the web service alive.`);
+    pairingListener.stop();
+    pairingListener.status = 'memory_guard';
+    pairingListener.lastError = `FCM listener exceeded ${fcmMemoryLimitMb} MB on this host.`;
+  }
+}, 10_000);
+fcmMemoryGuard.unref?.();
 
 function currentSteamId(req) {
   const match = (req.headers.cookie || '').match(/steamId=([^;]+)/);
@@ -469,6 +481,17 @@ async function startTelegramPolling() {
   }
 }
 
+async function startTelegramWebhook() {
+  if (!telegram.enabled() || telegramMode !== 'webhook') return;
+  const publicUrl = process.env.PUBLIC_URL?.replace(/\/$/, '');
+  if (!publicUrl || publicUrl.includes('localhost')) {
+    console.warn('Telegram webhook skipped: PUBLIC_URL must be a public HTTPS URL.');
+    return;
+  }
+  await telegram.setWebhook(`${publicUrl}/telegram/webhook`);
+  console.log('Telegram webhook configured.');
+}
+
 async function serveStatic(req, res, url) {
   const fileName = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
   const filePath = path.resolve(publicDir, fileName);
@@ -498,13 +521,16 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(port, async () => {
+server.listen(port, '0.0.0.0', async () => {
   console.log(`Rust Telegram Bridge listening on :${port}`);
   rustPlus.sync().catch((error) => console.error('Rust+ sync failed:', error));
   pairingListener.start().catch((error) => console.error('Rust+ pairing listener crashed:', error));
   startTelegramPolling().catch((error) => console.error('Telegram polling crashed:', error));
+  startTelegramWebhook().catch((error) => console.error('Telegram webhook setup failed:', error));
 });
 
 process.on('SIGTERM', () => {
+  clearInterval(fcmMemoryGuard);
+  pairingListener.stop();
   server.close(() => process.exit(0));
 });
