@@ -121,76 +121,127 @@ async function routeApi(req, res, url) {
     return send(res, 200, { ...state, telegramMode, pollingRunning, rustPlus: rustPlus.statuses() });
   }
 
-  /* --- STEAM AUTH MODULE --- */
-  if (url.pathname === '/api/auth/steam' && req.method === 'GET') {
-    const redirectUrl = `https://steamcommunity.com/openid/login?openid.ns=http://specs.openid.net/auth/2.0&openid.mode=checkid_setup&openid.return_to=\({encodeURIComponent(publicUrl + '/api/auth/steam/callback')}&openid.realm=\){encodeURIComponent(publicUrl)}&openid.identity=http://specs.openid.net/auth/2.0/identifier_select&openid.claimed_id=http://specs.openid.net/auth/2.0/identifier_select`;
-    res.writeHead(302, { Location: redirectUrl });
+/* --- STEAM AUTH MODULE --- */
+
+if (url.pathname === '/api/auth/steam' && req.method === 'GET') {
+  const params = new URLSearchParams({
+    'openid.ns': 'http://specs.openid.net/auth/2.0',
+    'openid.mode': 'checkid_setup',
+    'openid.return_to': `${publicUrl}/api/auth/steam/callback`,
+    'openid.realm': publicUrl,
+    'openid.identity': 'http://specs.openid.net/auth/2.0/identifier_select',
+    'openid.claimed_id': 'http://specs.openid.net/auth/2.0/identifier_select'
+  });
+
+  const redirectUrl =
+    `https://steamcommunity.com/openid/login?${params.toString()}`;
+
+  console.log('Steam OpenID redirect:', redirectUrl);
+
+  res.writeHead(302, {
+    Location: redirectUrl
+  });
+
+  return res.end();
+}
+
+if (url.pathname === '/api/auth/steam/callback' && req.method === 'GET') {
+  const claimedId = url.searchParams.get('openid.claimed_id');
+
+  if (claimedId) {
+    const steamId = claimedId.split('/').pop();
+
+    let displayName = `Player ${steamId}`;
+    let avatar = '';
+
+    if (process.env.STEAM_API_KEY) {
+      try {
+        const steamParams = new URLSearchParams({
+          key: process.env.STEAM_API_KEY,
+          steamids: steamId
+        });
+
+        const steamRes = await fetch(
+          `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?${steamParams.toString()}`
+        );
+
+        const data = await steamRes.json();
+        const player = data?.response?.players?.[0];
+
+        if (player) {
+          displayName = player.personaname;
+          avatar = player.avatarfull;
+        }
+      } catch (e) {
+        console.error(
+          'Failed to fetch Steam profile:',
+          e.message
+        );
+      }
+    }
+
+    await storage.update((state) => {
+      if (!state.users) {
+        state.users = [];
+      }
+
+      const index = state.users.findIndex(
+        (u) => u.steamId === steamId
+      );
+
+      if (index >= 0) {
+        state.users[index].displayName = displayName;
+        state.users[index].avatar = avatar;
+        state.users[index].updatedAt =
+          new Date().toISOString();
+      } else {
+        state.users.push({
+          steamId,
+          displayName,
+          avatar,
+          createdAt: new Date().toISOString()
+        });
+      }
+    });
+
+    res.writeHead(302, {
+      'Set-Cookie':
+        `steamId=${steamId}; Path=/; HttpOnly; SameSite=Lax`,
+      Location: '/'
+    });
+
     return res.end();
   }
 
-  if (url.pathname === '/api/auth/steam/callback' && req.method === 'GET') {
-    const claimedId = url.searchParams.get('openid.claimed_id');
-    if (claimedId) {
-      const steamId = claimedId.split('/').pop();
-      let displayName = `Player ${steamId}`;
-      let avatar = '';
+  return send(res, 400, {
+    error: 'Steam authentication failed'
+  });
+}
 
-      if (process.env.STEAM_API_KEY) {
-        try {
-          const steamRes = await fetch(`https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=\({process.env.STEAM_API_KEY}&steamids=\){steamId}`);
-          const data = await steamRes.json();
-          const player = data?.response?.players?.[0];
-          if (player) {
-            displayName = player.personaname;
-            avatar = player.avatarfull;
-          }
-        } catch (e) {
-          console.error('Failed to fetch Steam profile:', e.message);
-        }
-      }
+if (url.pathname === '/api/auth/me' && req.method === 'GET') {
+  const cookie = req.headers.cookie || '';
+  const match = cookie.match(/steamId=([^;]+)/);
+  const steamId = match ? match[1] : null;
 
-      await storage.update((state) => {
-        if (!state.users) state.users = [];
-        const index = state.users.findIndex((u) => u.steamId === steamId);
-        if (index >= 0) {
-          state.users[index].displayName = displayName;
-          state.users[index].avatar = avatar;
-          state.users[index].updatedAt = new Date().toISOString();
-        } else {
-          state.users.push({
-            steamId,
-            displayName,
-            avatar,
-            createdAt: new Date().toISOString()
-          });
-        }
-      });
-
-      res.writeHead(302, {
-        'Set-Cookie': `steamId=${steamId}; Path=/; HttpOnly; SameSite=Lax`,
-        Location: '/'
-      });
-      return res.end();
-    }
-    return send(res, 400, { error: 'Steam authentication failed' });
-  }
-
-  if (url.pathname === '/api/auth/me' && req.method === 'GET') {
-    const cookie = req.headers.cookie || '';
-    const match = cookie.match(/steamId=([^;]+)/);
-    const steamId = match ? match[1] : null;
-
-    if (!steamId) return send(res, 200, { authenticated: false });
-
-    const state = await storage.read();
-    const user = (state.users || []).find((u) => u.steamId === steamId);
-
+  if (!steamId) {
     return send(res, 200, {
-      authenticated: Boolean(user),
-      user: user || null
+      authenticated: false
     });
   }
-  /* --- END STEAM AUTH MODULE --- */
+
+  const state = await storage.read();
+
+  const user = (state.users || []).find(
+    (u) => u.steamId === steamId
+  );
+
+  return send(res, 200, {
+    authenticated: Boolean(user),
+    user: user || null
+  });
+}
+
+/* --- END STEAM AUTH MODULE --- */
 
   /* --- PAIRINGS MANAGEMENT --- */
   if (url.pathname === '/api/pairings/confirm' && req.method === 'POST') {
