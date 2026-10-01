@@ -21,6 +21,17 @@ function readJson(filePath) {
   }
 }
 
+function readConfig(filePath, encodedConfig) {
+  if (encodedConfig) {
+    try {
+      return JSON.parse(Buffer.from(encodedConfig, 'base64').toString('utf8'));
+    } catch {
+      throw new Error('RUSTPLUS_CONFIG_BASE64 is not valid Base64 JSON.');
+    }
+  }
+  return readJson(filePath);
+}
+
 function appDataToObject(appData) {
   if (!appData) {
     return {};
@@ -229,12 +240,14 @@ export class PairingListener {
     telegram,
     rustPlus,
     onPairing,
-    configFile = './rustplus.config.json'
+    configFile = './rustplus.config.json',
+    configBase64 = process.env.RUSTPLUS_CONFIG_BASE64
   }) {
     this.storage = storage;
     this.telegram = telegram;
     this.rustPlus = rustPlus;
     this.onPairing = onPairing;
+    this.configBase64 = configBase64;
 
     this.configFile = path.resolve(
       configFile
@@ -265,7 +278,7 @@ export class PairingListener {
         return;
       }
 
-      if (!existsSync(this.configFile)) {
+      if (!this.configBase64 && !existsSync(this.configFile)) {
         this.status = 'missing_config';
 
         console.warn(
@@ -275,9 +288,7 @@ export class PairingListener {
         return;
       }
 
-      const config = readJson(
-        this.configFile
-      );
+      const config = readConfig(this.configFile, this.configBase64);
 
       const credentials =
         config?.fcm_credentials;
@@ -398,6 +409,10 @@ export class PairingListener {
           );
         });
 
+    } catch (error) {
+      this.status = 'error';
+      this.lastError = error?.message || String(error);
+      console.error('Rust+ pairing listener startup failed:', this.lastError);
     } finally {
       this.connecting = false;
     }
@@ -739,7 +754,7 @@ export class PairingListener {
         this.lastError,
 
       configFile:
-        this.configFile,
+        this.configBase64 ? 'RUSTPLUS_CONFIG_BASE64' : this.configFile,
 
       hasClient:
         Boolean(this.client),

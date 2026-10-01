@@ -16,6 +16,8 @@ services:
         value: 60
       - key: RUSTPLUS_CONFIG_FILE
         value: ./rustplus.config.json
+      - key: RUSTPLUS_CONFIG_BASE64
+        sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: PUBLIC_URL
