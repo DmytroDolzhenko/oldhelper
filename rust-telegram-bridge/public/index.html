@@ -1,66 +1,14 @@
 <!doctype html>
 <html lang="uk">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Rust Telegram Bridge</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Rust Telegram Bridge</title><link rel="stylesheet" href="/styles.css"></head>
   <body>
     <main class="shell">
-      <section class="topbar">
-        <div>
-          <h1>Rust Telegram Bridge</h1>
-          <p>Rust+ smart alarm та інші події у Telegram для всієї групи.</p>
-        </div>
-        <a class="steam-login" id="steamLogin" href="/api/auth/steam">
-          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="currentColor">
-            <path d="M12 2a10 10 0 0 0-10 9.2l5.4 2.2a2.8 2.8 0 0 1 1.6-.5h.1l2.4-3.5v-.1a3.7 3.7 0 1 1 3.7 3.7h-.1l-3.4 2.5a2.8 2.8 0 0 1-5.5.6l-3.9-1.6A10 10 0 1 0 12 2Zm-4.4 15.1 1.2.5a2.1 2.1 0 1 0 1.1-2.8l1.3.5a1.5 1.5 0 1 1-1.1 2.8l-1.2-.5-.1-.1-.1-.1-.1-.3Zm9-6.6a2.5 2.5 0 1 0-2.5-2.5 2.5 2.5 0 0 0 2.5 2.5Z"/>
-          </svg>
-          <span>Увійти через Steam</span>
-        </a>
-      </section>
-
+      <header class="topbar"><div><h1>Rust Telegram Bridge</h1><p id="user">Завантаження…</p></div><a class="steam-login" href="/api/auth/steam">Увійти через Steam</a></header>
       <section class="grid">
-        <article class="panel">
-          <div class="panel-title">
-            <h2>Підключення Rust+</h2>
-            <span id="connectionState">offline</span>
-          </div>
-          <form id="serverForm">
-            <input type="hidden" id="serverId" />
-            <label>Назва сервера<input id="name" required placeholder="My wipe server" /></label>
-            <label>IP або hostname<input id="ip" required placeholder="203.0.113.10" /></label>
-            <label>Companion port<input id="port" required type="number" min="10000" value="28082" /></label>
-            <label>SteamID64 / playerId<input id="playerId" required /></label>
-            <label>playerToken<input id="playerToken" required /></label>
-            <label class="switch"><input id="enabled" type="checkbox" checked /> Увімкнути listener</label>
-            <h3>Пристрої</h3>
-            <div id="entities"></div>
-            <button type="button" id="addEntity">Додати device</button>
-            <button type="submit">Зберегти сервер</button>
-          </form>
-        </article>
-
-        <article class="panel">
-          <div class="panel-title">
-            <h2>Telegram</h2>
-            <button id="setWebhook">Set webhook</button>
-          </div>
-          <p class="muted">Користувачі пишуть боту /start. Steam потрібен тільки власнику bridge.</p>
-          <p id="telegramStatus" class="notice"></p>
-          <div id="subscribers" class="list"></div>
-        </article>
-
-        <article class="panel wide">
-          <div class="panel-title">
-            <h2>Останні події</h2>
-            <button id="refresh">Оновити</button>
-          </div>
-          <div id="events" class="list"></div>
-        </article>
+        <article class="panel"><h2>1. Telegram</h2><p id="telegram">Telegram ще не підключено</p><button id="connectTelegram">Прив’язати Telegram</button></article>
+        <article class="panel"><h2>2. Підключення Rust+</h2><p>У грі відкрийте Rust+, натисніть Pair with Server. Після появи сервера повторіть дію для потрібного девайсу.</p><p id="status" class="notice active"></p><button id="refresh" class="secondary">Оновити</button></article>
+        <section class="wide"><h2>Мої сервери й девайси</h2><div id="servers" class="list"></div></section>
       </section>
-    </main>
-    <script src="/app.js"></script>
+    </main><script src="/app.js"></script>
   </body>
 </html>

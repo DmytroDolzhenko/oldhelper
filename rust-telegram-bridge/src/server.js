@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { createStorageFromEnv } from './storage.js';
 import { Telegram, escapeHtml } from './telegram.js';
 import { RustPlusManager } from './rustplus-listener.js';
+import { PairingListener } from './pairing-listener.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '../public');
@@ -41,6 +42,66 @@ const rustPlus = new RustPlusManager({
   cooldownSeconds: process.env.ALERT_COOLDOWN_SECONDS || 60
 });
 
+const pairingListener = new PairingListener({
+  storage,
+  telegram,
+  rustPlus,
+  configFile: process.env.RUSTPLUS_CONFIG_FILE || './rustplus.config.json',
+  onPairing: saveAutomaticPairing
+});
+
+function currentSteamId(req) {
+  const match = (req.headers.cookie || '').match(/steamId=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+async function saveAutomaticPairing(pairing) {
+  let outcome = 'created';
+  await storage.update((state) => {
+    const user = (state.users || []).find((item) => item.steamId === pairing.playerId);
+    if (!user) {
+      outcome = 'unknown-user';
+      return;
+    }
+    let server = state.servers.find((item) => item.ip === pairing.ip && String(item.port) === String(pairing.port));
+    if (!server) {
+      server = { id: pairing.serverId || crypto.randomUUID(), name: pairing.name, ip: pairing.ip, port: pairing.port, playerId: pairing.playerId, playerToken: pairing.playerToken, enabled: true, entities: [], steamIds: [pairing.playerId] };
+      state.servers.push(server);
+    } else {
+      server.enabled = true;
+      server.steamIds = [...new Set([...(server.steamIds || []), pairing.playerId])];
+      outcome = pairing.entityId ? 'device-updated' : 'server-already-linked';
+    }
+    if (pairing.entityId && !server.entities.some((item) => String(item.id) === String(pairing.entityId))) {
+      server.entities.push({ id: pairing.entityId, name: pairing.entityName || pairing.entityType || `Device ${pairing.entityId}`, enabled: true, onlyWhenActive: true });
+    }
+  });
+  if (outcome === 'unknown-user') {
+    console.warn(`Ignoring Rust+ pairing for Steam ${pairing.playerId}: user has not signed in to the bridge.`);
+    return;
+  }
+  await rustPlus.sync();
+  const state = await storage.read();
+  const recipients = state.subscribers.filter((item) => item.enabled);
+  const text = pairing.entityId
+    ? `Rust+ device ${escapeHtml(pairing.entityName || pairing.entityId)} підключено автоматично.`
+    : outcome === 'server-already-linked'
+      ? 'Цей сервер вже синхронізований для всіх гравців.'
+      : `Rust+ сервер ${escapeHtml(pairing.name)} підключено автоматично.`;
+  await Promise.all(recipients.map((item) => telegram.sendMessage(item.chatId, text).catch(() => {})));
+}
+
+async function verifySteamOpenId(url) {
+  const params = new URLSearchParams(url.searchParams);
+  params.set('openid.mode', 'check_authentication');
+  const response = await fetch('https://steamcommunity.com/openid/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params.toString()
+  });
+  return response.ok && (await response.text()).includes('is_valid:true');
+}
+
 async function handleTelegramUpdate(update) {
   const message = update.message;
   const chat = message?.chat;
@@ -59,17 +120,26 @@ async function handleTelegramUpdate(update) {
   }
 
   if (message.text?.startsWith('/start')) {
+    const code = message.text.trim().split(/\s+/, 2)[1];
+    let bound = false;
     await storage.update((state) => {
+      const user = (state.users || []).find((item) => item.telegramLinkCode === code && Date.parse(item.telegramLinkExpiresAt) > Date.now());
       const existing = state.subscribers.find((item) => item.chatId === chatId);
+      if (user) bound = true;
       if (existing) {
         existing.enabled = true;
         existing.name = name;
+        if (user) existing.steamId = user.steamId;
         existing.lastSeenAt = new Date().toISOString();
       } else {
-        state.subscribers.push({ chatId, name, enabled: true, createdAt: new Date().toISOString() });
+        state.subscribers.push({ chatId, name, steamId: user?.steamId ?? null, enabled: true, createdAt: new Date().toISOString() });
+      }
+      if (user) {
+        delete user.telegramLinkCode;
+        delete user.telegramLinkExpiresAt;
       }
     });
-    await telegram.sendMessage(chatId, 'Готово. Цей чат отримуватиме Rust+ сповіщення від bridge.');
+    await telegram.sendMessage(chatId, bound ? 'Готово. Telegram прив’язано до Steam, а чат підписано на Rust+ сповіщення.' : 'Готово. Цей чат підписано на Rust+ сповіщення.');
     return;
   }
 
@@ -114,11 +184,14 @@ function sanitizeServer(input) {
 async function routeApi(req, res, url) {
   const publicUrl = process.env.PUBLIC_URL || `http://localhost:${port}`;
 
-  if (url.pathname === '/health') return send(res, 200, { ok: true, telegramMode, pollingRunning, rustPlus: rustPlus.statuses() });
+  if (url.pathname === '/health') return send(res, 200, { ok: true, telegramMode, pollingRunning, rustPlus: rustPlus.statuses(), pairing: pairingListener.getStatus() });
 
   if (url.pathname === '/api/state' && req.method === 'GET') {
+    const steamId = currentSteamId(req);
+    if (!steamId) return send(res, 401, { error: 'Steam sign-in is required.' });
     const state = await storage.read();
-    return send(res, 200, { ...state, telegramMode, pollingRunning, rustPlus: rustPlus.statuses() });
+    const servers = state.servers.filter((server) => (server.steamIds || []).includes(steamId)).map(({ playerId, playerToken, ...server }) => server);
+    return send(res, 200, { user: (state.users || []).find((user) => user.steamId === steamId) || null, servers, subscribers: state.subscribers.filter((item) => item.steamId === steamId).map(({ chatId, name, enabled }) => ({ chatId, name, enabled })), events: state.events.filter((event) => servers.some((server) => server.id === event.serverId)), telegramMode, pollingRunning, rustPlus: rustPlus.statuses(), pairing: pairingListener.getStatus() });
   }
 
 /* --- STEAM AUTH MODULE --- */
@@ -149,6 +222,9 @@ if (url.pathname === '/api/auth/steam/callback' && req.method === 'GET') {
   const claimedId = url.searchParams.get('openid.claimed_id');
 
   if (claimedId) {
+    if (!await verifySteamOpenId(url)) {
+      return send(res, 400, { error: 'Steam authentication could not be verified.' });
+    }
     const steamId = claimedId.split('/').pop();
 
     let displayName = `Player ${steamId}`;
@@ -239,6 +315,20 @@ if (url.pathname === '/api/auth/me' && req.method === 'GET') {
     authenticated: Boolean(user),
     user: user || null
   });
+}
+
+if (url.pathname === '/api/telegram-link' && req.method === 'POST') {
+  const steamId = currentSteamId(req);
+  if (!steamId) return send(res, 401, { error: 'Steam sign-in is required.' });
+  const code = crypto.randomBytes(18).toString('base64url');
+  await storage.update((state) => {
+    const user = state.users.find((item) => item.steamId === steamId);
+    if (!user) throw new Error('Steam user not found.');
+    user.telegramLinkCode = code;
+    user.telegramLinkExpiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
+  });
+  const me = await telegram.call('getMe', {});
+  return send(res, 200, { url: `https://t.me/${me.username}?start=${code}`, expiresInSeconds: 900 });
 }
 
 /* --- END STEAM AUTH MODULE --- */
@@ -410,7 +500,8 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(port, async () => {
   console.log(`Rust Telegram Bridge listening on :${port}`);
-  await rustPlus.sync().catch((error) => console.error('Rust+ sync failed:', error));
+  rustPlus.sync().catch((error) => console.error('Rust+ sync failed:', error));
+  pairingListener.start().catch((error) => console.error('Rust+ pairing listener crashed:', error));
   startTelegramPolling().catch((error) => console.error('Telegram polling crashed:', error));
 });
 

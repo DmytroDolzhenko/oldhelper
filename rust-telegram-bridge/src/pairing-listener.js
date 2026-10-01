@@ -228,11 +228,13 @@ export class PairingListener {
     storage,
     telegram,
     rustPlus,
+    onPairing,
     configFile = './rustplus.config.json'
   }) {
     this.storage = storage;
     this.telegram = telegram;
     this.rustPlus = rustPlus;
+    this.onPairing = onPairing;
 
     this.configFile = path.resolve(
       configFile
@@ -356,6 +358,16 @@ export class PairingListener {
         }
       );
 
+      this.client.on(
+        'ON_NOTIFICATION_RECEIVED',
+        ({ notification, object }) => {
+          this.handlePairing(notification || object)
+            .catch((error) => {
+              console.error('Encrypted pairing notification failed:', error?.message || error);
+            });
+        }
+      );
+
       this.status = 'connecting';
 
       // Не блокуємо запуск HTTP-сервера очікуванням
@@ -456,6 +468,11 @@ export class PairingListener {
         'Rust+ FCM notification received, but pairing data was not recognized.'
       );
 
+      return;
+    }
+
+    if (this.onPairing) {
+      await this.onPairing(pairing, raw);
       return;
     }
 
