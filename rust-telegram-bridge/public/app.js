@@ -23,6 +23,15 @@ function showTelegramStatus(message) {
   status.classList.add('active');
 }
 
+function renderSystemStatus(data) {
+  $('#systemStatus').innerHTML = `
+    <div><span class="muted">Telegram</span><strong>${data.telegramMode || 'unknown'}${data.pollingRunning ? ' / polling active' : ''}</strong></div>
+    <div><span class="muted">Rust+ FCM</span><strong>${data.pairing?.status || 'unknown'}</strong></div>
+    <div><span class="muted">FCM config</span><strong>${data.pairing?.configFile || 'not set'}</strong></div>
+    <div><span class="muted">Rust+ servers</span><strong>${(data.rustPlus || []).map((item) => item.status).join(', ') || 'not connected'}</strong></div>
+  `;
+}
+
 function entityRow(entity = {}) {
   const div = document.createElement('div');
   div.className = 'entity-row';
@@ -38,6 +47,7 @@ function entityRow(entity = {}) {
 
 function render() {
   const data = state.data;
+  renderSystemStatus(data);
   const first = data.servers[0];
   if (first) {
     $('#serverId').value = first.id;
@@ -64,6 +74,50 @@ function render() {
     </div>
   `).join('') || '<p class="muted">Ще немає підписників.</p>';
 
+  $('#connectedServers').innerHTML = data.servers.map((server) => `
+    <div class="server-card">
+      <div class="server-head">
+        <div>
+          <strong>${server.name}</strong><br>
+          <span class="muted">${server.ip}:${server.port} · ${server.enabled ? 'enabled' : 'disabled'}</span>
+        </div>
+        <button class="danger" data-delete-server="${server.id}">Видалити сервер</button>
+      </div>
+      <div class="device-list">
+        ${(server.entities || []).map((entity) => `
+          <div class="item">
+            <div>
+              <strong>${entity.name || `Entity ${entity.id}`}</strong><br>
+              <span class="muted">entity ${entity.id} · ${entity.enabled ? 'enabled' : 'disabled'}</span>
+            </div>
+            <button class="secondary" data-delete-entity="${entity.id}" data-server="${server.id}">Видалити device</button>
+          </div>
+        `).join('') || '<p class="muted">Device ще не підключені.</p>'}
+      </div>
+    </div>
+  `).join('') || '<p class="muted">Сервери ще не підключені.</p>';
+
+  $('#pendingPairings').innerHTML = (data.pendingPairings || []).map((item) => `
+    <div class="item">
+      <div>
+        <strong>${item.type === 'entity' ? 'Device' : 'Server'}: ${item.name || item.entityName || item.id}</strong><br>
+        <span class="muted">${item.ip}:${item.port}${item.entityId ? ` · entity ${item.entityId}` : ''} · ${item.status}</span>
+      </div>
+      <span>${item.createdAt}</span>
+    </div>
+  `).join('') || '<p class="muted">Немає pending pairing.</p>';
+
+  $('#pairingState').textContent = `FCM: ${data.pairing?.status || 'unknown'}`;
+  $('#pairingLogs').innerHTML = (data.pairingLogs || []).map((item) => `
+    <details class="log-item">
+      <summary>
+        <strong>${item.parsed ? 'parsed' : 'unparsed'}</strong>
+        <span class="muted">${item.createdAt}${item.server ? ` · ${item.server}` : ''}${item.entityId ? ` · entity ${item.entityId}` : ''}</span>
+      </summary>
+      <pre>${item.raw || ''}</pre>
+    </details>
+  `).join('') || '<p class="muted">FCM push ще не приходив у bridge.</p>';
+
   $('#events').innerHTML = data.events.map((event) => `
     <div class="item">
       <div><strong>${event.entityName}</strong> на ${event.serverName}<br><span class="muted">${event.createdAt}</span></div>
@@ -76,6 +130,24 @@ function render() {
       await api('/api/subscribers', {
         method: 'PATCH',
         body: JSON.stringify({ chatId: button.dataset.chat, enabled: button.dataset.enabled === 'true' })
+      });
+      await load();
+    });
+  });
+
+  document.querySelectorAll('[data-delete-server]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!confirm('Видалити цей сервер і всі його device з bridge?')) return;
+      await api(`/api/servers/${encodeURIComponent(button.dataset.deleteServer)}`, { method: 'DELETE' });
+      await load();
+    });
+  });
+
+  document.querySelectorAll('[data-delete-entity]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      if (!confirm('Видалити цей device з bridge?')) return;
+      await api(`/api/servers/${encodeURIComponent(button.dataset.server)}/entities/${encodeURIComponent(button.dataset.deleteEntity)}`, {
+        method: 'DELETE'
       });
       await load();
     });
@@ -123,6 +195,7 @@ $('#setWebhook').addEventListener('click', async () => {
 });
 
 $('#refresh').addEventListener('click', load);
+$('#refreshStatus').addEventListener('click', load);
 
 load().catch((error) => {
   console.error(error);

@@ -178,6 +178,28 @@ button.secondary {
   font-size: 13px;
 }
 
+
+.steam-login {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 16px;
+  border-radius: 6px;
+  background: #1b2838;
+  border: 1px solid #66c0f4;
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.steam-login:hover {
+  background: #2a475e;
+}
+
 @media (max-width: 780px) {
   .topbar,
   .grid,
@@ -185,5 +207,9 @@ button.secondary {
   .item {
     grid-template-columns: 1fr;
     display: grid;
+  }
+
+  .steam-login {
+    justify-self: start;
   }
 }

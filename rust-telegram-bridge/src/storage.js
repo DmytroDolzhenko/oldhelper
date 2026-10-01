@@ -4,6 +4,8 @@ import path from 'node:path';
 const DEFAULT_STATE = {
   servers: [],
   subscribers: [],
+  users: [],
+  pendingPairings: [],
   events: [],
   settings: {
     telegramWebhookConfiguredAt: null
@@ -21,6 +23,8 @@ function normalizeState(state) {
     settings: { ...DEFAULT_STATE.settings, ...(state?.settings ?? {}) },
     servers: Array.isArray(state?.servers) ? state.servers : [],
     subscribers: Array.isArray(state?.subscribers) ? state.subscribers : [],
+    users: Array.isArray(state?.users) ? state.users : [],
+    pendingPairings: Array.isArray(state?.pendingPairings) ? state.pendingPairings : [],
     events: Array.isArray(state?.events) ? state.events : []
   };
 }
@@ -81,7 +85,7 @@ export class SupabaseStorage {
     const response = await fetch(`${this.url}/rest/v1/app_state?id=eq.main&select=data`, {
       headers: this.headers()
     });
-    if (!response.ok) throw new Error(`Supabase read failed: ${response.status} ${await response.text()}`);
+    if (!response.ok) throw new Error(`Supabase read failed: \({response.status}\){await response.text()}`);
     const rows = await response.json();
     return normalizeState(rows[0]?.data ?? DEFAULT_STATE);
   }
@@ -93,7 +97,7 @@ export class SupabaseStorage {
       headers: this.headers({ Prefer: 'resolution=merge-duplicates' }),
       body: JSON.stringify({ id: 'main', data: next })
     });
-    if (!response.ok) throw new Error(`Supabase write failed: ${response.status} ${await response.text()}`);
+    if (!response.ok) throw new Error(`Supabase write failed: \({response.status}\){await response.text()}`);
     return next;
   }
 

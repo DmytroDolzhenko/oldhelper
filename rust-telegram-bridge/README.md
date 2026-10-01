@@ -57,6 +57,40 @@ PUBLIC_URL=http://localhost:3000
 
 У цьому режимі кнопку `Set webhook` натискати не треба. Сервер сам опитує Telegram, тому просто напиши `/start` боту, потім натисни `Оновити` в UI. Підписник має з'явитися у блоці Telegram.
 
+## Автоматичне підключення server/device через Telegram
+
+Після першої Steam/Rust+ реєстрації система може ловити pairing notifications сама. Для цього поруч із `.env` має лежати `rustplus.config.json`, який створює:
+
+```bash
+npx @liamcottle/rustplus.js fcm-register
+```
+
+Після цього консольний `fcm-listen` більше не потрібен. Запусти bridge:
+
+```bash
+node src/server.js
+```
+
+Потім:
+
+1. Напиши боту `/start`, щоб bridge знав, кому надсилати підтвердження.
+2. Зайди на Rust сервер у грі.
+3. Натисни `Pair with Server`.
+4. У Telegram прийде повідомлення з кнопками `Підключити` / `Ігнорувати`.
+5. Натисни `Підключити`, і сервер сам додасться в UI.
+6. Для Smart Alarm або іншого device натисни `Pair` у грі.
+7. У Telegram підтверди device, і він сам додасться до відповідного сервера.
+
+Підтвердити pairing може будь-який Telegram чат, який підписався через `/start`. Якщо цей самий сервер або device вже доданий кимось із тімейтів, bridge не створить дубль і надішле повідомлення `Цей девайс вже синхронізований для всіх гравців.` або відповідне повідомлення для сервера.
+
+Якщо Telegram повідомлення не прийшло, відкрий UI і перевір блок `Rust+ Push Logs`.
+
+- Якщо logs порожні, bridge не отримує FCM push: найчастіше немає `rustplus.config.json`, він не від того Steam акаунта, Rust+ pairing робиться не з тим Steam акаунтом, або Facepunch надсилає push тільки на офіційний Rust+ device.
+- Якщо logs є, але `unparsed`, bridge отримує push, але формат payload інший. Розгорни log у UI і подивись raw JSON.
+- Якщо logs є і `parsed`, але Telegram мовчить, проблема вже в Telegram subscriber/webhook/polling.
+
+Статус FCM listener видно біля блоку `Очікують підтвердження`, наприклад `FCM: connected`, `missing_config`, `missing_fcm_credentials`.
+
 Для Telegram webhook `PUBLIC_URL` не може бути `localhost`, бо Telegram має відправляти HTTP-запити на твій сервіс з інтернету. Для локального тесту використай tunnel, наприклад `localtunnel`, `ngrok` або Cloudflare Tunnel, і постав `PUBLIC_URL` на його `https://...` адресу.
 
 Для деплою в інтернет краще постав:

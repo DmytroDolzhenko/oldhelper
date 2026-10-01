@@ -26,7 +26,7 @@ export class Telegram {
     return this.call('getUpdates', {
       offset,
       timeout,
-      allowed_updates: ['message']
+      allowed_updates: ['message', 'callback_query']
     });
   }
 
@@ -40,19 +40,38 @@ export class Telegram {
     return this.call('getWebhookInfo', {});
   }
 
-  sendMessage(chatId, text) {
+  sendMessage(chatId, text, extra = {}) {
     return this.call('sendMessage', {
       chat_id: chatId,
       text,
       parse_mode: 'HTML',
-      disable_web_page_preview: true
+      disable_web_page_preview: true,
+      ...extra
     });
   }
 
   setWebhook(url) {
     return this.call('setWebhook', {
       url,
-      allowed_updates: ['message']
+      allowed_updates: ['message', 'callback_query']
+    });
+  }
+
+  answerCallbackQuery(callbackQueryId, text) {
+    return this.call('answerCallbackQuery', {
+      callback_query_id: callbackQueryId,
+      text
+    });
+  }
+
+  editMessageText(chatId, messageId, text, extra = {}) {
+    return this.call('editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+      ...extra
     });
   }
 }

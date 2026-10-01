@@ -112,12 +112,134 @@ function sanitizeServer(input) {
 }
 
 async function routeApi(req, res, url) {
+  const publicUrl = process.env.PUBLIC_URL || `http://localhost:${port}`;
+
   if (url.pathname === '/health') return send(res, 200, { ok: true, telegramMode, pollingRunning, rustPlus: rustPlus.statuses() });
 
   if (url.pathname === '/api/state' && req.method === 'GET') {
     const state = await storage.read();
     return send(res, 200, { ...state, telegramMode, pollingRunning, rustPlus: rustPlus.statuses() });
   }
+
+  /* --- STEAM AUTH MODULE --- */
+  if (url.pathname === '/api/auth/steam' && req.method === 'GET') {
+    const redirectUrl = `https://steamcommunity.com/openid/login?openid.ns=http://specs.openid.net/auth/2.0&openid.mode=checkid_setup&openid.return_to=\({encodeURIComponent(publicUrl + '/api/auth/steam/callback')}&openid.realm=\){encodeURIComponent(publicUrl)}&openid.identity=http://specs.openid.net/auth/2.0/identifier_select&openid.claimed_id=http://specs.openid.net/auth/2.0/identifier_select`;
+    res.writeHead(302, { Location: redirectUrl });
+    return res.end();
+  }
+
+  if (url.pathname === '/api/auth/steam/callback' && req.method === 'GET') {
+    const claimedId = url.searchParams.get('openid.claimed_id');
+    if (claimedId) {
+      const steamId = claimedId.split('/').pop();
+      let displayName = `Player ${steamId}`;
+      let avatar = '';
+
+      if (process.env.STEAM_API_KEY) {
+        try {
+          const steamRes = await fetch(`https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=\({process.env.STEAM_API_KEY}&steamids=\){steamId}`);
+          const data = await steamRes.json();
+          const player = data?.response?.players?.[0];
+          if (player) {
+            displayName = player.personaname;
+            avatar = player.avatarfull;
+          }
+        } catch (e) {
+          console.error('Failed to fetch Steam profile:', e.message);
+        }
+      }
+
+      await storage.update((state) => {
+        if (!state.users) state.users = [];
+        const index = state.users.findIndex((u) => u.steamId === steamId);
+        if (index >= 0) {
+          state.users[index].displayName = displayName;
+          state.users[index].avatar = avatar;
+          state.users[index].updatedAt = new Date().toISOString();
+        } else {
+          state.users.push({
+            steamId,
+            displayName,
+            avatar,
+            createdAt: new Date().toISOString()
+          });
+        }
+      });
+
+      res.writeHead(302, {
+        'Set-Cookie': `steamId=${steamId}; Path=/; HttpOnly; SameSite=Lax`,
+        Location: '/'
+      });
+      return res.end();
+    }
+    return send(res, 400, { error: 'Steam authentication failed' });
+  }
+
+  if (url.pathname === '/api/auth/me' && req.method === 'GET') {
+    const cookie = req.headers.cookie || '';
+    const match = cookie.match(/steamId=([^;]+)/);
+    const steamId = match ? match[1] : null;
+
+    if (!steamId) return send(res, 200, { authenticated: false });
+
+    const state = await storage.read();
+    const user = (state.users || []).find((u) => u.steamId === steamId);
+
+    return send(res, 200, {
+      authenticated: Boolean(user),
+      user: user || null
+    });
+  }
+  /* --- END STEAM AUTH MODULE --- */
+
+  /* --- PAIRINGS MANAGEMENT --- */
+  if (url.pathname === '/api/pairings/confirm' && req.method === 'POST') {
+    const payload = await parseJson(req);
+    await storage.update((state) => {
+      const pendingIndex = (state.pendingPairings || []).findIndex((p) => p.id === payload.pairingId);
+      if (pendingIndex === -1) return;
+
+      const pairing = state.pendingPairings[pendingIndex];
+
+      let server = state.servers.find((s) => s.ip === pairing.ip || s.id === pairing.serverId);
+      if (!server) {
+        server = {
+          id: pairing.serverId || crypto.randomUUID(),
+          name: pairing.serverName || 'Rust Server',
+          ip: pairing.ip || '',
+          port: pairing.port || 28082,
+          playerId: pairing.createdBySteamId || '',
+          playerToken: pairing.playerToken || '',
+          enabled: true,
+          entities: []
+        };
+        state.servers.push(server);
+      }
+
+      if (!server.entities.some((e) => String(e.id) === String(pairing.entityId))) {
+        server.entities.push({
+          id: String(pairing.entityId),
+          name: pairing.entityName || `Device ${pairing.entityId}`,
+          enabled: true,
+          onlyWhenActive: true
+        });
+      }
+
+      state.pendingPairings.splice(pendingIndex, 1);
+    });
+
+    await rustPlus.sync();
+    return send(res, 200, { ok: true });
+  }
+
+  if (url.pathname.startsWith('/api/pairings/delete/') && req.method === 'DELETE') {
+    const id = decodeURIComponent(url.pathname.split('/').pop());
+    await storage.update((state) => {
+      state.pendingPairings = (state.pendingPairings || []).filter((p) => p.id !== id);
+    });
+    return send(res, 200, { ok: true });
+  }
+  /* --- END PAIRINGS MANAGEMENT --- */
 
   if (url.pathname === '/api/servers' && req.method === 'POST') {
     const payload = await parseJson(req);
@@ -150,18 +272,18 @@ async function routeApi(req, res, url) {
   }
 
   if (url.pathname === '/api/telegram/webhook' && req.method === 'POST') {
-    const publicUrl = process.env.PUBLIC_URL?.replace(/\/$/, '');
-    if (!publicUrl) {
+    const publicUrlEnv = process.env.PUBLIC_URL?.replace(/\/$/, '');
+    if (!publicUrlEnv) {
       return send(res, 400, {
         error: 'PUBLIC_URL is required. Add PUBLIC_URL to .env, restart the server, then try again.'
       });
     }
-    if (publicUrl.includes('localhost') || publicUrl.includes('127.0.0.1')) {
+    if (publicUrlEnv.includes('localhost') || publicUrlEnv.includes('127.0.0.1')) {
       return send(res, 400, {
         error: 'Telegram cannot call localhost. Use a public tunnel URL or deploy the app, set PUBLIC_URL to that https URL, restart, then press Set webhook.'
       });
     }
-    await telegram.setWebhook(`${publicUrl}/telegram/webhook`);
+    await telegram.setWebhook(`${publicUrlEnv}/telegram/webhook`);
     await storage.update((state) => {
       state.settings.telegramWebhookConfiguredAt = new Date().toISOString();
     });
@@ -235,14 +357,9 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(port, () => {
+server.listen(port, async () => {
   console.log(`Rust Telegram Bridge listening on :${port}`);
-  
-  console.log('[Rust+] Initializing listener and syncing with database...');
-  rustPlus.sync()
-    .then(() => console.log('[Rust+] Initial sync complete.'))
-    .catch((error) => console.error('[Rust+] Sync failed on startup:', error));
-
+  await rustPlus.sync().catch((error) => console.error('Rust+ sync failed:', error));
   startTelegramPolling().catch((error) => console.error('Telegram polling crashed:', error));
 });
 
