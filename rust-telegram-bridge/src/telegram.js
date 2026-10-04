@@ -1,7 +1,9 @@
 export class Telegram {
   constructor(token) {
     this.token = token;
-    this.apiBase = token ? `https://api.telegram.org/bot${token}` : null;
+    this.apiBase = token
+      ? `https://api.telegram.org/bot${token}`
+      : null;
   }
 
   enabled() {
@@ -9,19 +11,26 @@ export class Telegram {
   }
 
   async call(method, payload) {
-    if (!this.enabled()) throw new Error('TELEGRAM_BOT_TOKEN is not configured.');
-    
-    // Тут було виправлено помилку інтерполяції URL
-    const response = await fetch(`\({this.apiBase}/\){method}`, {
+    if (!this.enabled()) {
+      throw new Error('TELEGRAM_BOT_TOKEN is not configured.');
+    }
+
+    const response = await fetch(`${this.apiBase}/${method}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify(payload)
     });
-    
+
     const body = await response.json().catch(() => ({}));
+
     if (!response.ok || body.ok === false) {
-      throw new Error(`Telegram \({method} failed:\){response.status} ${JSON.stringify(body)}`);
+      throw new Error(
+        `Telegram ${method} failed: ${response.status} ${JSON.stringify(body)}`
+      );
     }
+
     return body.result;
   }
 
@@ -71,7 +80,7 @@ export class Telegram {
 
 export function escapeHtml(value) {
   return String(value)
-    .replaceAll('&', '&')
-    .replaceAll('<', '<')
-    .replaceAll('>', '>');
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
 }
