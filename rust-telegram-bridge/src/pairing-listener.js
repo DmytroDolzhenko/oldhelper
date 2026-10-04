@@ -7,11 +7,14 @@ import { escapeHtml } from './telegram.js';
 
 const require = createRequire(import.meta.url);
 
-const PushReceiverClient = require(
-  '@liamcottle/push-receiver/src/client'
-);
+// ВАЖЛИВО:
+// Не завантажуємо push-receiver при імпорті цього файлу.
+// Він буде завантажений тільки всередині start().
+let PushReceiverClient = null;
 
 const MAX_RAW_LOG_LENGTH = 4000;
+const MAX_PENDING_NOTIFICATIONS = 50;
+const MAX_PERSISTENT_IDS = 100;
 
 function readJson(filePath) {
   try {
@@ -24,11 +27,16 @@ function readJson(filePath) {
 function readConfig(filePath, encodedConfig) {
   if (encodedConfig) {
     try {
-      return JSON.parse(Buffer.from(encodedConfig, 'base64').toString('utf8'));
+      return JSON.parse(
+        Buffer.from(encodedConfig, 'base64').toString('utf8')
+      );
     } catch {
-      throw new Error('RUSTPLUS_CONFIG_BASE64 is not valid Base64 JSON.');
+      throw new Error(
+        'RUSTPLUS_CONFIG_BASE64 is not valid Base64 JSON.'
+      );
     }
   }
+
   return readJson(filePath);
 }
 
@@ -213,6 +221,7 @@ function confirmationText(pairing) {
       : null,
 
     '',
+
     'Підключити це до bridge?'
   ]
     .filter(Boolean)
@@ -262,10 +271,19 @@ export class PairingListener {
     this.stopped = false;
 
     this.connecting = false;
+
+    this.notificationQueue = [];
+    this.processingNotifications = false;
+    this.droppedNotifications = 0;
   }
 
   async start() {
-    if (this.connecting) {
+    // Не дозволяємо створити декілька FCM-клієнтів.
+    if (this.connecting || this.client) {
+      console.warn(
+        'Rust+ pairing listener is already running.'
+      );
+
       return;
     }
 
@@ -278,7 +296,10 @@ export class PairingListener {
         return;
       }
 
-      if (!this.configBase64 && !existsSync(this.configFile)) {
+      if (
+        !this.configBase64 &&
+        !existsSync(this.configFile)
+      ) {
         this.status = 'missing_config';
 
         console.warn(
@@ -288,7 +309,10 @@ export class PairingListener {
         return;
       }
 
-      const config = readConfig(this.configFile, this.configBase64);
+      const config = readConfig(
+        this.configFile,
+        this.configBase64
+      );
 
       const credentials =
         config?.fcm_credentials;
@@ -304,6 +328,18 @@ export class PairingListener {
         );
 
         return;
+      }
+
+      /*
+       * ВАЖЛИВО:
+       * push-receiver завантажується тут, а не на рівні
+       * модуля. Тому проблема з FCM не повинна блокувати
+       * імпорт server.js.
+       */
+      if (!PushReceiverClient) {
+        PushReceiverClient = require(
+          '@liamcottle/push-receiver/src/client'
+        );
       }
 
       this.client = new PushReceiverClient(
@@ -359,44 +395,57 @@ export class PairingListener {
       this.client.on(
         'ON_DATA_RECEIVED',
         (data) => {
-          this.handlePairing(data)
-            .catch((error) => {
-              console.error(
-                'Pairing notification failed:',
-                error?.message || error
-              );
-            });
+          this.trimPersistentIds();
+          this.enqueueNotification(data);
         }
       );
 
       this.client.on(
         'ON_NOTIFICATION_RECEIVED',
         ({ notification, object }) => {
-          this.handlePairing(notification || object)
-            .catch((error) => {
-              console.error('Encrypted pairing notification failed:', error?.message || error);
-            });
+          this.trimPersistentIds();
+          this.enqueueNotification(
+            notification || object
+          );
         }
       );
 
       this.status = 'connecting';
 
-      // Не блокуємо запуск HTTP-сервера очікуванням
-      // довгоживучого FCM-з'єднання.
+      /*
+       * НЕ await-имо connect().
+       *
+       * FCM socket є довгоживучим з'єднанням.
+       * HTTP-сервер не повинен чекати його завершення.
+       *
+       * Також ми не створюємо тут власний цикл
+       * повторного connect(). Якщо push-receiver
+       * має власний механізм reconnect — він працює
+       * самостійно.
+       */
       Promise.resolve()
         .then(() => {
-          if (!this.stopped) {
-            return this.client.connect();
+          if (
+            this.stopped ||
+            !this.client
+          ) {
+            return null;
           }
+
+          return this.client.connect();
         })
         .then(() => {
           if (!this.stopped) {
             console.log(
-              'Rust+ pairing listener started. Pair server/device in game to receive Telegram confirmation.'
+              'Rust+ pairing listener started. FCM connection is active.'
             );
           }
         })
         .catch((error) => {
+          if (this.stopped) {
+            return;
+          }
+
           this.status = 'error';
 
           this.lastError =
@@ -407,12 +456,25 @@ export class PairingListener {
             'Rust+ FCM connect error:',
             this.lastError
           );
+
+          /*
+           * НЕ викликаємо connect() повторно тут.
+           * Інакше можемо створити власний нескінченний
+           * цикл reconnect.
+           */
         });
 
     } catch (error) {
       this.status = 'error';
-      this.lastError = error?.message || String(error);
-      console.error('Rust+ pairing listener startup failed:', this.lastError);
+
+      this.lastError =
+        error?.message ||
+        String(error);
+
+      console.error(
+        'Rust+ pairing listener startup failed:',
+        this.lastError
+      );
     } finally {
       this.connecting = false;
     }
@@ -431,16 +493,102 @@ export class PairingListener {
     }
 
     this.client = null;
+    this.notificationQueue = [];
     this.status = 'stopped';
+  }
+
+  trimPersistentIds() {
+    if (
+      this.client?._persistentIds?.length >
+      MAX_PERSISTENT_IDS
+    ) {
+      this.client._persistentIds.splice(
+        0,
+        this.client._persistentIds.length -
+          MAX_PERSISTENT_IDS
+      );
+    }
+  }
+
+  enqueueNotification(raw) {
+    if (
+      this.notificationQueue.length >=
+      MAX_PENDING_NOTIFICATIONS
+    ) {
+      this.droppedNotifications += 1;
+      return;
+    }
+
+    this.notificationQueue.push(raw);
+
+    if (!this.processingNotifications) {
+      this.processNotificationQueue();
+    }
+  }
+
+  async processNotificationQueue() {
+    this.processingNotifications = true;
+
+    try {
+      while (
+        !this.stopped &&
+        this.notificationQueue.length
+      ) {
+        const raw =
+          this.notificationQueue.shift();
+
+        try {
+          await this.handlePairing(raw);
+        } catch (error) {
+          console.error(
+            'Pairing notification failed:',
+            error?.message || error
+          );
+        }
+      }
+    } finally {
+      this.processingNotifications = false;
+    }
   }
 
   async handlePairing(raw) {
     const pairing =
       normalizePairing(raw);
 
+    /*
+     * Звичайні Rust+ повідомлення bridge не цікавлять.
+     * Обробляємо тільки повідомлення, які містять
+     * необхідні дані pairing.
+     */
+    if (!pairing) {
+      return;
+    }
+
+    /*
+     * Якщо server.js передав onPairing —
+     * використовуємо автоматичну обробку.
+     */
+    if (this.onPairing) {
+      await this.onPairing(
+        pairing,
+        raw
+      );
+
+      return;
+    }
+
+    /*
+     * Старий fallback:
+     * зберігаємо pairing і відправляємо
+     * Telegram confirmation.
+     */
     await this.storage.update(
       (draft) => {
-        if (!Array.isArray(draft.pairingLogs)) {
+        if (
+          !Array.isArray(
+            draft.pairingLogs
+          )
+        ) {
           draft.pairingLogs = [];
         }
 
@@ -477,19 +625,6 @@ export class PairingListener {
           );
       }
     );
-
-    if (!pairing) {
-      console.warn(
-        'Rust+ FCM notification received, but pairing data was not recognized.'
-      );
-
-      return;
-    }
-
-    if (this.onPairing) {
-      await this.onPairing(pairing, raw);
-      return;
-    }
 
     const state =
       await this.storage.read();
@@ -535,8 +670,12 @@ export class PairingListener {
             String(pairing.port) &&
           item.playerId ===
             pairing.playerId &&
-          String(item.entityId || '') ===
-            String(pairing.entityId || '')
+          String(
+            item.entityId || ''
+          ) ===
+            String(
+              pairing.entityId || ''
+            )
       );
 
     if (duplicate) {
@@ -748,13 +887,16 @@ export class PairingListener {
 
   getStatus() {
     return {
-      status: this.status,
+      status:
+        this.status,
 
       lastError:
         this.lastError,
 
       configFile:
-        this.configBase64 ? 'RUSTPLUS_CONFIG_BASE64' : this.configFile,
+        this.configBase64
+          ? 'RUSTPLUS_CONFIG_BASE64'
+          : this.configFile,
 
       hasClient:
         Boolean(this.client),

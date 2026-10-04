@@ -521,10 +521,11 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(port, '0.0.0.0', async () => {
+const listenHost = process.env.RENDER ? '0.0.0.0' : undefined;
+server.listen(port, listenHost, async () => {
   console.log(`Rust Telegram Bridge listening on :${port}`);
   rustPlus.sync().catch((error) => console.error('Rust+ sync failed:', error));
-  pairingListener.start().catch((error) => console.error('Rust+ pairing listener crashed:', error));
+ // pairingListener.start().catch((error) => console.error('Rust+ pairing listener crashed:', error));
   startTelegramPolling().catch((error) => console.error('Telegram polling crashed:', error));
   startTelegramWebhook().catch((error) => console.error('Telegram webhook setup failed:', error));
 });
