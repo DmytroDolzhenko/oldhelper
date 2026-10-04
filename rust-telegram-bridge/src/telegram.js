@@ -10,14 +10,14 @@ export class Telegram {
 
   async call(method, payload) {
     if (!this.enabled()) throw new Error('TELEGRAM_BOT_TOKEN is not configured.');
-    const response = await fetch(`${this.apiBase}/${method}`, {
+    const response = await fetch(`\({this.apiBase}/\){method}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok || body.ok === false) {
-      throw new Error(`Telegram ${method} failed: ${response.status} ${JSON.stringify(body)}`);
+      throw new Error(`Telegram \({method} failed:\){response.status} ${JSON.stringify(body)}`);
     }
     return body.result;
   }
@@ -26,7 +26,7 @@ export class Telegram {
     return this.call('getUpdates', {
       offset,
       timeout,
-      allowed_updates: ['message']
+      allowed_updates: ['message', 'callback_query']
     });
   }
 
@@ -40,26 +40,35 @@ export class Telegram {
     return this.call('getWebhookInfo', {});
   }
 
-  sendMessage(chatId, text) {
+  sendMessage(chatId, text, options = {}) {
     return this.call('sendMessage', {
       chat_id: chatId,
       text,
       parse_mode: 'HTML',
-      disable_web_page_preview: true
+      disable_web_page_preview: true,
+      ...options
+    });
+  }
+
+  answerCallbackQuery(callbackQueryId, text = '', showAlert = false) {
+    return this.call('answerCallbackQuery', {
+      callback_query_id: callbackQueryId,
+      text,
+      show_alert: showAlert
     });
   }
 
   setWebhook(url) {
     return this.call('setWebhook', {
       url,
-      allowed_updates: ['message']
+      allowed_updates: ['message', 'callback_query']
     });
   }
 }
 
 export function escapeHtml(value) {
   return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
+    .replaceAll('&', '&')
+    .replaceAll('<', '<')
+    .replaceAll('>', '>');
 }

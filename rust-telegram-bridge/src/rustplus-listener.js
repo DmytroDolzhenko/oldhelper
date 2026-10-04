@@ -95,7 +95,7 @@ export class RustPlusManager extends EventEmitter {
     const value = Boolean(changed.payload?.value);
     if (entity.onlyWhenActive !== false && !value) return;
 
-    const cooldownKey = `${serverId}:${entity.id}:${value}`;
+    const cooldownKey = `\({serverId}:\){entity.id}:${value}`;
     const now = Date.now();
     if (now - (this.lastAlertAt.get(cooldownKey) ?? 0) < this.cooldownMs) return;
     this.lastAlertAt.set(cooldownKey, now);
@@ -116,11 +116,11 @@ export class RustPlusManager extends EventEmitter {
     });
 
     const text = [
-      '🚨 <b>Rust+ Alert</b>',
-      `<b>Server:</b> ${escapeHtml(server.name)}`,
-      `<b>Device:</b> ${escapeHtml(event.entityName)}`,
-      `<b>Status:</b> ${value ? 'active' : 'inactive'}`,
-      `<b>Time:</b> ${escapeHtml(event.createdAt)}`
+      '🚨 **Rust+ Alert**',
+      `**Server:** ${escapeHtml(server.name)}`,
+      `**Device:** ${escapeHtml(event.entityName)}`,
+      `**Status:** ${value ? 'active' : 'inactive'}`,
+      `**Time:** ${escapeHtml(event.createdAt)}`
     ].join('\n');
 
     for (const subscriber of state.subscribers.filter((item) => item.enabled)) {
@@ -132,6 +132,64 @@ export class RustPlusManager extends EventEmitter {
       });
     }
   }
+
+  /* --- КЕРУВАННЯ SMART SWITCH (ПЕРЕМИКАЧАМИ) --- */
+
+  // Дистанційне увімкнення/вимкнення пристрою
+  async setSmartSwitchState(entityId, state) {
+    const stateData = await this.storage.read();
+    let targetClient = null;
+
+    // Шукаємо, на якому з підключених серверів знаходиться девайс
+    for (const server of stateData.servers) {
+      const hasEntity = server.entities?.some((e) => String(e.id) === String(entityId));
+      if (hasEntity) {
+        const record = this.clients.get(server.id);
+        if (record && record.status === 'connected') {
+          targetClient = record.client;
+          break;
+        }
+      }
+    }
+
+    if (!targetClient) {
+      throw new Error(`Не вдалося знайти активне з'єднання для девайса ID: ${entityId}`);
+    }
+
+    return new Promise((resolve, reject) => {
+      const callback = (response) => {
+        if (response && response.error) {
+          return reject(new Error(response.error));
+        }
+        resolve(response);
+      };
+
+      if (state) {
+        targetClient.turnSmartSwitchOn(Number(entityId), callback);
+      } else {
+        targetClient.turnSmartSwitchOff(Number(entityId), callback);
+      }
+    });
+  }
+
+  // Відправка кнопок керування в Telegram
+  async sendSwitchControlMenu(chatId, entityId, entityName) {
+    const text = `🔌 **Керування перемикачем**\n**Пристрій:** ${escapeHtml(entityName || entityId)}`;
+    const replyMarkup = {
+      inline_keyboard: [
+        [
+          { text: '🟢 Увімкнути', callback_data: `sw_on_${entityId}` },
+          { text: '🔴 Вимкнути', callback_data: `sw_off_${entityId}` }
+        ]
+      ]
+    };
+
+    return await this.telegram.sendMessage(chatId, text, {
+      reply_markup: JSON.stringify(replyMarkup)
+    });
+  }
+
+  /* --- END КЕРУВАННЯ SMART SWITCH --- */
 
   statuses() {
     return [...this.clients.entries()].map(([serverId, record]) => ({

@@ -42,14 +42,42 @@ const rustPlus = new RustPlusManager({
 });
 
 async function handleTelegramUpdate(update) {
+  // 1. Обробка натискань на Inline-кнопки
+  if (update.callback_query) {
+    const cb = update.callback_query;
+    const data = cb.data || '';
+
+    if (data.startsWith('sw_')) {
+      const isTurnOn = data.startsWith('sw_on_');
+      const entityId = data.replace(/^sw_(on|off)_/, '');
+
+      try {
+        await rustPlus.setSmartSwitchState(entityId, isTurnOn);
+        await telegram.answerCallbackQuery(
+          cb.id,
+          `Пристрій ${isTurnOn ? 'увімкнено 🟢' : 'вимкнено 🔴'}!`
+        );
+      } catch (err) {
+        await telegram.answerCallbackQuery(
+          cb.id,
+          `Помилка: ${err.message}`,
+          true
+        );
+      }
+    }
+    return;
+  }
+
+  // 2. Обробка текстових команд
   const message = update.message;
   const chat = message?.chat;
   if (!chat?.id) return;
 
   const chatId = String(chat.id);
+  const text = message.text || '';
   const name = [chat.first_name, chat.last_name].filter(Boolean).join(' ') || chat.username || chat.title || chatId;
 
-  if (message.text?.startsWith('/stop')) {
+  if (text.startsWith('/stop')) {
     await storage.update((state) => {
       const subscriber = state.subscribers.find((item) => item.chatId === chatId);
       if (subscriber) subscriber.enabled = false;
@@ -58,7 +86,7 @@ async function handleTelegramUpdate(update) {
     return;
   }
 
-  if (message.text?.startsWith('/start')) {
+  if (text.startsWith('/start')) {
     await storage.update((state) => {
       const existing = state.subscribers.find((item) => item.chatId === chatId);
       if (existing) {
@@ -69,11 +97,27 @@ async function handleTelegramUpdate(update) {
         state.subscribers.push({ chatId, name, enabled: true, createdAt: new Date().toISOString() });
       }
     });
-    await telegram.sendMessage(chatId, 'Готово. Цей чат отримуватиме Rust+ сповіщення від bridge.');
+    await telegram.sendMessage(chatId, 'Готово. Цей чат отримуватиме Rust+ сповіщення від bridge.\n\nКоманда /switches відкриває меню керування перемикачами.');
     return;
   }
 
-  await telegram.sendMessage(chatId, 'Напиши /start, щоб підписатися, або /stop, щоб вимкнути сповіщення.');
+  // Команда для виводу кнопок керування перемикачами
+  if (text.startsWith('/switches') || text.startsWith('/menu')) {
+    const state = await storage.read();
+    const allEntities = state.servers.flatMap((s) => s.entities || []);
+
+    if (!allEntities.length) {
+      await telegram.sendMessage(chatId, 'Не знайдено жодного збереженого пристрою у системі.');
+      return;
+    }
+
+    for (const entity of allEntities) {
+      await rustPlus.sendSwitchControlMenu(chatId, entity.id, entity.name);
+    }
+    return;
+  }
+
+  await telegram.sendMessage(chatId, 'Доступні команди:\n/switches — Меню керування перемикачами\n/start — Підписатися\n/stop — Відписатися');
 }
 
 function send(res, status, body, headers = {}) {
