@@ -395,12 +395,41 @@ if (url.pathname === '/api/telegram-link' && req.method === 'POST') {
   /* --- END PAIRINGS MANAGEMENT --- */
 
   if (url.pathname === '/api/servers' && req.method === 'POST') {
+    const steamId = currentSteamId(req);
+    if (!steamId) return send(res, 401, { error: 'Steam sign-in is required.' });
     const payload = await parseJson(req);
     await storage.update((state) => {
       const server = sanitizeServer(payload);
       const index = state.servers.findIndex((item) => item.id === server.id);
-      if (index >= 0) state.servers[index] = server;
-      else state.servers.push(server);
+      if (index >= 0) {
+        server.steamIds = [...new Set([...(state.servers[index].steamIds || []), steamId])];
+        state.servers[index] = server;
+      } else {
+        server.steamIds = [steamId];
+        state.servers.push(server);
+      }
+    });
+    await rustPlus.sync();
+    return send(res, 200, { ok: true });
+  }
+
+  const entityMatch = url.pathname.match(/^\/api\/servers\/([^/]+)\/entities$/);
+  if (entityMatch && req.method === 'POST') {
+    const steamId = currentSteamId(req);
+    if (!steamId) return send(res, 401, { error: 'Steam sign-in is required.' });
+    const serverId = decodeURIComponent(entityMatch[1]);
+    const payload = await parseJson(req);
+    if (!payload.entityId) return send(res, 400, { error: 'entityId is required.' });
+    await storage.update((state) => {
+      const server = state.servers.find((item) => item.id === serverId && (item.steamIds || []).includes(steamId));
+      if (!server) throw new Error('Server not found.');
+      const existing = server.entities.find((item) => String(item.id) === String(payload.entityId));
+      if (existing) {
+        existing.name = String(payload.name || existing.name);
+        existing.enabled = payload.enabled !== false;
+      } else {
+        server.entities.push({ id: String(payload.entityId), name: String(payload.name || `Device ${payload.entityId}`), enabled: payload.enabled !== false, onlyWhenActive: true });
+      }
     });
     await rustPlus.sync();
     return send(res, 200, { ok: true });

@@ -34,6 +34,13 @@ export class RustPlusManager extends EventEmitter {
     for (const server of state.servers) {
       if (server.enabled && !this.clients.has(server.id)) {
         await this.connect(server);
+      } else if (server.enabled) {
+        const record = this.clients.get(server.id);
+        if (record?.status === 'connected') {
+          for (const entity of server.entities ?? []) {
+            if (entity.enabled) record.client.getEntityInfo(Number(entity.id), () => false);
+          }
+        }
       }
     }
   }
