@@ -3,13 +3,14 @@ import crypto from 'node:crypto';
 import { escapeHtml } from './telegram.js';
 
 export class RustPlusManager extends EventEmitter {
-  constructor({ storage, telegram, cooldownSeconds = 60 }) {
+  constructor({ storage, telegram, cooldownSeconds = 5 }) {
     super();
     this.storage = storage;
     this.telegram = telegram;
     this.cooldownMs = Number(cooldownSeconds) * 1000;
     this.clients = new Map();
     this.lastAlertAt = new Map();
+    this.suppressAlertUntil = new Map(); // Карта для приглушення сповіщень при ручному перемиканні
     this.RustPlus = null;
   }
 
@@ -92,6 +93,12 @@ export class RustPlusManager extends EventEmitter {
     const entity = server?.entities?.find((item) => String(item.id) === String(changed.entityId));
     if (!server || !entity?.enabled) return;
 
+    // Перевіряємо, чи не було цей пристрій щойно переключено вручну через бот
+    const suppressTime = this.suppressAlertUntil.get(String(entity.id)) ?? 0;
+    if (Date.now() < suppressTime) {
+      return; // Ігноруємо сповіщення, оскільки дію зробив сам користувач
+    }
+
     const value = Boolean(changed.payload?.value);
     if (entity.onlyWhenActive !== false && !value) return;
 
@@ -116,11 +123,11 @@ export class RustPlusManager extends EventEmitter {
     });
 
     const text = [
-      '🚨 **Rust+ Alert**',
-      `**Server:** ${escapeHtml(server.name)}`,
-      `**Device:** ${escapeHtml(event.entityName)}`,
-      `**Status:** ${value ? 'active' : 'inactive'}`,
-      `**Time:** ${escapeHtml(event.createdAt)}`
+      '🚨 Rust+ Alert',
+      `Server:** ${escapeHtml(server.name)}`,
+      `Device:** ${escapeHtml(event.entityName)}`,
+      `Status:** ${value ? 'active' : 'inactive'}`,
+      `Time:** ${escapeHtml(event.createdAt)}`
     ].join('\n');
 
     for (const subscriber of state.subscribers.filter((item) => item.enabled)) {
@@ -153,6 +160,9 @@ export class RustPlusManager extends EventEmitter {
     if (!targetClient) {
       throw new Error(`Не вдалося знайти активне з'єднання для девайса ID: ${entityId}`);
     }
+
+    // Тимчасово блокуємо сповіщення для цього девайса на 5 секунд
+    this.suppressAlertUntil.set(String(entityId), Date.now() + 5000);
 
     return new Promise((resolve, reject) => {
       const callback = (response) => {
