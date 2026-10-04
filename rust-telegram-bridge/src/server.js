@@ -97,17 +97,28 @@ async function handleTelegramUpdate(update) {
         state.subscribers.push({ chatId, name, enabled: true, createdAt: new Date().toISOString() });
       }
     });
-    await telegram.sendMessage(chatId, 'Готово. Цей чат отримуватиме Rust+ сповіщення від bridge.\n\nКоманда /switches відкриває меню керування перемикачами.');
+
+    const mainMenuKeyboard = {
+      keyboard: [
+        [{ text: '🔌 Перемикачі' }]
+      ],
+      resize_keyboard: true
+    };
+
+    await telegram.sendMessage(
+      chatId,
+      'Готово. Цей чат отримуватиме Rust+ сповіщення від bridge.\n\nКористуйся меню нижче для керування пристроями:',
+      { reply_markup: JSON.stringify(mainMenuKeyboard) }
+    );
     return;
   }
 
-  // Команда для виводу кнопок керування перемикачами
-  if (text.startsWith('/switches') || text.startsWith('/menu')) {
+  if (text.startsWith('/switches') || text === '🔌 Перемикачі') {
     const state = await storage.read();
     const allEntities = state.servers.flatMap((s) => s.entities || []);
 
     if (!allEntities.length) {
-      await telegram.sendMessage(chatId, 'Не знайдено жодного збереженого пристрою у системі.');
+      await telegram.sendMessage(chatId, 'Не знайдено жодного збереженого пристрою у системі. Спочатку додайте його на сайті.');
       return;
     }
 
@@ -117,7 +128,7 @@ async function handleTelegramUpdate(update) {
     return;
   }
 
-  await telegram.sendMessage(chatId, 'Доступні команди:\n/switches — Меню керування перемикачами\n/start — Підписатися\n/stop — Відписатися');
+  await telegram.sendMessage(chatId, 'Доступні команди:\n/switches або "🔌 Перемикачі" — Меню керування\n/start — Підписатися\n/stop — Відписатися');
 }
 
 function send(res, status, body, headers = {}) {

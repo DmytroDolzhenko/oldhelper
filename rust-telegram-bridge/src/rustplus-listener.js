@@ -133,14 +133,12 @@ export class RustPlusManager extends EventEmitter {
     }
   }
 
-  /* --- КЕРУВАННЯ SMART SWITCH (ПЕРЕМИКАЧАМИ) --- */
+  /* --- КЕРУВАННЯ SMART SWITCH --- */
 
-  // Дистанційне увімкнення/вимкнення пристрою
   async setSmartSwitchState(entityId, state) {
     const stateData = await this.storage.read();
     let targetClient = null;
 
-    // Шукаємо, на якому з підключених серверів знаходиться девайс
     for (const server of stateData.servers) {
       const hasEntity = server.entities?.some((e) => String(e.id) === String(entityId));
       if (hasEntity) {
@@ -172,7 +170,6 @@ export class RustPlusManager extends EventEmitter {
     });
   }
 
-  // Відправка кнопок керування в Telegram
   async sendSwitchControlMenu(chatId, entityId, entityName) {
     const text = `🔌 **Керування перемикачем**\n**Пристрій:** ${escapeHtml(entityName || entityId)}`;
     const replyMarkup = {
