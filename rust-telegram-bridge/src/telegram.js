@@ -10,11 +10,14 @@ export class Telegram {
 
   async call(method, payload) {
     if (!this.enabled()) throw new Error('TELEGRAM_BOT_TOKEN is not configured.');
+    
+    // Тут було виправлено помилку інтерполяції URL
     const response = await fetch(`\({this.apiBase}/\){method}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
+    
     const body = await response.json().catch(() => ({}));
     if (!response.ok || body.ok === false) {
       throw new Error(`Telegram \({method} failed:\){response.status} ${JSON.stringify(body)}`);
