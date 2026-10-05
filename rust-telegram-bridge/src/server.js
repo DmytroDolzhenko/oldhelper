@@ -116,7 +116,7 @@ async function handleTelegramUpdate(update) {
   }
 
   // --- МЕНЮ ПЕРЕМИКАЧІВ ---
-  if (text.startsWith('/switches') || text === '🔌 Перемикачі') {
+    if (text.startsWith('/switches') || text.includes('Перемикачі')) {
     const state = await storage.read();
     const allEntities = state.servers.flatMap((s) => s.entities || []);
 
@@ -132,27 +132,28 @@ async function handleTelegramUpdate(update) {
   }
 
   // --- ДОДАВАННЯ КАМЕРИ ---
-  if (text.startsWith('/addcam ')) {
-    const parts = text.trim().split(' ').slice(1);
-    const camId = parts[0]; 
-    const camName = parts.slice(1).join(' ') || camId; 
+  if (text.startsWith('/cameras') || text.includes('Камери')) {
+    const state = await storage.read();
+    const server = state.servers.find(s => s.enabled);
+    
+    if (!server) return await telegram.sendMessage(chatId, 'Немає активних серверів. Додайте сервер на сайті.');
 
-    if (!camId) {
-      return await telegram.sendMessage(chatId, '⚠️ Використання: `/addcam [ID_КАМЕРИ] [Назва]`\nНаприклад: `/addcam Roof Дах бази`');
+    const cameras = server.cameras || [];
+    if (cameras.length === 0) {
+      return await telegram.sendMessage(chatId, 'У вас ще немає збережених камер.\nДодайте першу командою:\n`/addcam [ID_КАМЕРИ] [Бажана Назва]`\n\n*Приклад: /addcam Compaund1 Двір 1*');
     }
 
-    await storage.update((state) => {
-      const server = state.servers.find(s => s.enabled);
-      if (server) {
-        if (!server.cameras) server.cameras = [];
-        server.cameras = server.cameras.filter(c => c.id !== camId);
-        server.cameras.push({ id: camId, name: camName });
-      }
+    const publicUrl = process.env.PUBLIC_URL?.replace(/\/$/, '');
+    if (!publicUrl) return await telegram.sendMessage(chatId, 'Помилка: PUBLIC_URL не налаштовано в .env.');
+
+    const inline_keyboard = cameras.map(cam => ([{
+      text: `📹 ${cam.name}`,
+      web_app: { url: `\({publicUrl}/camera.html?serverId=\){server.id}&camera=${encodeURIComponent(cam.id)}` }
+    }]));
+
+    return await telegram.sendMessage(chatId, '📹 **Оберіть камеру для перегляду LIVE:**\n*(Для видалення: /delcam ID)*', {
+      reply_markup: JSON.stringify({ inline_keyboard })
     });
-    
-    // Виправлений рядок без використання зворотних лапок для уникнення помилок парсера VS Code
-    const successMsg = '✅ Камеру **' + escapeHtml(camName) + '** (ID: `' + escapeHtml(camId) + '`) успішно додано!';
-    return await telegram.sendMessage(chatId, successMsg, { reply_markup: JSON.stringify(mainMenuKeyboard) });
   }
 
   // --- ВИДАЛЕННЯ КАМЕРИ ---
