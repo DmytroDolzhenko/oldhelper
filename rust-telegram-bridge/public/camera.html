@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+
+  <!-- Telegram Web App -->
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+  >
+
+  <title>Rust+ Camera</title>
+
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Верхня панель */
+    .header {
+      height: 56px;
+      min-height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+
+      background: #111;
+      border-bottom: 1px solid #292929;
+    }
+
+    .camera-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .camera-icon {
+      font-size: 20px;
+    }
+
+    .camera-name {
+      font-size: 16px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #999;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #777;
+    }
+
+    .status.connected .status-dot {
+      background: #39d353;
+      box-shadow: 0 0 8px rgba(57, 211, 83, 0.7);
+    }
+
+    .status.error .status-dot {
+      background: #ff453a;
+    }
+
+    /* Область відео */
+    .viewer {
+      position: relative;
+      flex: 1;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      background: #000;
+      overflow: hidden;
+    }
+
+    #cameraImage {
+      display: none;
+
+      max-width: 100%;
+      max-height: 100%;
+
+      width: auto;
+      height: auto;
+
+      object-fit: contain;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    /* Завантаження */
+    .loading {
+      position: absolute;
+
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+
+      color: #aaa;
+      text-align: center;
+    }
+
+    .spinner {
+      width: 34px;
+      height: 34px;
+
+      border: 3px solid #333;
+      border-top-color: #fff;
+      border-radius: 50%;
+
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .loading.hidden {
+      display: none;
+    }
+
+    /* Повідомлення про помилку */
+    .error {
+      display: none;
+
+      position: absolute;
+      inset: 0;
+
+      align-items: center;
+      justify-content: center;
+
+      padding: 30px;
+
+      text-align: center;
+      color: #ff453a;
+      font-size: 14px;
+    }
+
+    .error.visible {
+      display: flex;
+    }
+
+    /* Нижня панель */
+    .controls {
+      height: 58px;
+      min-height: 58px;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      background: #111;
+      border-top: 1px solid #292929;
+    }
+
+    .refresh-button {
+      border: 0;
+      border-radius: 10px;
+
+      padding: 9px 18px;
+
+      background: #222;
+      color: #fff;
+
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .refresh-button:active {
+      background: #333;
+      transform: scale(0.97);
+    }
+
+    /* Коли камера ще не передала кадр */
+    .no-frame {
+      color: #777;
+      font-size: 14px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="header">
+
+    <div class="camera-title">
+      <span class="camera-icon">📹</span>
+      <span id="cameraName" class="camera-name">
+        Rust+ Camera
+      </span>
+    </div>
+
+    <div id="status" class="status">
+      <span class="status-dot"></span>
+      <span id="statusText">Підключення...</span>
+    </div>
+
+  </div>
+
+
+  <div class="viewer">
+
+    <img
+      id="cameraImage"
+      alt="Rust+ Camera"
+    >
+
+    <div id="loading" class="loading">
+      <div class="spinner"></div>
+      <div>Підключення до камери...</div>
+    </div>
+
+    <div id="noFrame" class="no-frame" style="display: none;">
+      Очікування відео...
+    </div>
+
+    <div id="error" class="error">
+      <div id="errorText">
+        Помилка підключення до камери.
+      </div>
+    </div>
+
+  </div>
+
+
+  <div class="controls">
+
+    <button
+      id="refreshButton"
+      class="refresh-button"
+      type="button"
+    >
+      🔄 Перепідключитися
+    </button>
+
+  </div>
+
+
+<script>
+  const tg = window.Telegram?.WebApp;
+
+  if (tg) {
+    tg.ready();
+    tg.expand();
+  }
+
+
+  // --------------------------------------------------
+  // DOM
+  // --------------------------------------------------
+
+  const cameraImage = document.getElementById('cameraImage');
+  const cameraName = document.getElementById('cameraName');
+
+  const loading = document.getElementById('loading');
+  const noFrame = document.getElementById('noFrame');
+
+  const error = document.getElementById('error');
+  const errorText = document.getElementById('errorText');
+
+  const status = document.getElementById('status');
+  const statusText = document.getElementById('statusText');
+
+  const refreshButton = document.getElementById('refreshButton');
+
+
+  // --------------------------------------------------
+  // Parameters
+  // --------------------------------------------------
+
+  const params = new URLSearchParams(window.location.search);
+
+  const serverId = params.get('serverId');
+  const cameraId = params.get('camera');
+
+
+  if (!serverId || !cameraId) {
+    showError('Не вказано serverId або camera.');
+  }
+
+
+  // --------------------------------------------------
+  // Camera name
+  // --------------------------------------------------
+
+  cameraName.textContent = cameraId || 'Rust+ Camera';
+
+
+  // --------------------------------------------------
+  // WebSocket
+  // --------------------------------------------------
+
+  let socket = null;
+  let reconnectTimer = null;
+  let manuallyClosed = false;
+
+
+  function getWebSocketUrl() {
+
+    const protocol =
+      window.location.protocol === 'https:'
+        ? 'wss:'
+        : 'ws:';
+
+    return (
+      protocol +
+      '//' +
+      window.location.host +
+      '/?serverId=' +
+      encodeURIComponent(serverId) +
+      '&camera=' +
+      encodeURIComponent(cameraId)
+    );
+  }
+
+
+  function connect() {
+
+    if (!serverId || !cameraId) {
+      return;
+    }
+
+    manuallyClosed = false;
+
+    clearTimeout(reconnectTimer);
+
+    setStatus(
+      'connecting',
+      'Підключення...'
+    );
+
+    hideError();
+
+    loading.classList.remove('hidden');
+    noFrame.style.display = 'none';
+
+
+    if (socket) {
+      try {
+        socket.close();
+      } catch (_) {}
+    }
+
+
+    const wsUrl = getWebSocketUrl();
+
+    console.log('[Camera] Connecting:', wsUrl);
+
+
+    try {
+
+      socket = new WebSocket(wsUrl);
+
+      socket.binaryType = 'arraybuffer';
+
+
+      socket.onopen = () => {
+
+        console.log('[Camera] WebSocket connected');
+
+        setStatus(
+          'connected',
+          'LIVE'
+        );
+
+        loading.classList.remove('hidden');
+      };
+
+
+      socket.onmessage = async (event) => {
+
+        try {
+
+          /*
+           * Сервер відправляє:
+           *
+           * {
+           *   type: "frame",
+           *   data: frame
+           * }
+           */
+
+          let message = event.data;
+
+
+          // Якщо WebSocket передав текст
+          if (typeof message === 'string') {
+
+            try {
+              message = JSON.parse(message);
+            } catch (_) {
+
+              console.warn(
+                '[Camera] Invalid JSON:',
+                message
+              );
+
+              return;
+            }
+          }
+
+
+          // Якщо прийшов Blob
+          if (message instanceof Blob) {
+
+            const buffer =
+              await message.arrayBuffer();
+
+            showFrame(
+              new Uint8Array(buffer)
+            );
+
+            return;
+          }
+
+
+          // Помилка від сервера
+          if (
+            message &&
+            message.type === 'error'
+          ) {
+
+            showError(
+              message.message ||
+              'Rust+ не зміг підключити камеру.'
+            );
+
+            return;
+          }
+
+
+          // Кадр
+          if (
+            message &&
+            message.type === 'frame'
+          ) {
+
+            showFrame(message.data);
+
+            return;
+          }
+
+        } catch (err) {
+
+          console.error(
+            '[Camera] Frame error:',
+            err
+          );
+
+        }
+
+      };
+
+
+      socket.onerror = (event) => {
+
+        console.error(
+          '[Camera] WebSocket error:',
+          event
+        );
+
+        setStatus(
+          'error',
+          'Помилка'
+        );
+
+      };
+
+
+      socket.onclose = (event) => {
+
+        console.log(
+          '[Camera] WebSocket closed:',
+          event.code,
+          event.reason
+        );
+
+
+        if (manuallyClosed) {
+          return;
+        }
+
+
+        setStatus(
+          'error',
+          'Відключено'
+        );
+
+
+        loading.classList.remove('hidden');
+
+
+        /*
+         * Автоматичне перепідключення
+         */
+        reconnectTimer = setTimeout(() => {
+
+          connect();
+
+        }, 3000);
+
+      };
+
+
+    } catch (err) {
+
+      console.error(
+        '[Camera] Connection failed:',
+        err
+      );
+
+      showError(
+        'Не вдалося підключитися до WebSocket.'
+      );
+
+    }
+
+  }
+
+
+  // --------------------------------------------------
+  // Show frame
+  // --------------------------------------------------
+
+  function showFrame(data) {
+
+    try {
+
+      let bytes;
+
+
+      /*
+       * Варіант 1:
+       * Uint8Array / ArrayBuffer
+       */
+
+      if (data instanceof Uint8Array) {
+
+        bytes = data;
+
+      } else if (data instanceof ArrayBuffer) {
+
+        bytes = new Uint8Array(data);
+
+      }
+
+
+      /*
+       * Варіант 2:
+       *
+       * Node.js Buffer після JSON.stringify:
+       *
+       * {
+       *   type: "Buffer",
+       *   data: [137, 80, 78, ...]
+       * }
+       */
+
+      else if (
+        data &&
+        data.type === 'Buffer' &&
+        Array.isArray(data.data)
+      ) {
+
+        bytes = new Uint8Array(data.data);
+
+      }
+
+
+      /*
+       * Варіант 3:
+       * Масив байтів
+       */
+
+      else if (Array.isArray(data)) {
+
+        bytes = new Uint8Array(data);
+
+      }
+
+
+      /*
+       * Варіант 4:
+       * Base64 string
+       */
+
+      else if (typeof data === 'string') {
+
+        /*
+         * Якщо вже data:image/... —
+         * показуємо напряму.
+         */
+
+        if (data.startsWith('data:image/')) {
+
+          cameraImage.src = data;
+
+          frameReady();
+
+          return;
+        }
+
+
+        /*
+         * Якщо просто Base64
+         */
+
+        const binary =
+          atob(data);
+
+        bytes =
+          new Uint8Array(binary.length);
+
+        for (
+          let i = 0;
+          i < binary.length;
+          i++
+        ) {
+
+          bytes[i] =
+            binary.charCodeAt(i);
+
+        }
+
+      }
+
+
+      if (!bytes || !bytes.length) {
+
+        console.warn(
+          '[Camera] Unknown frame format:',
+          data
+        );
+
+        return;
+      }
+
+
+      /*
+       * Визначаємо тип зображення
+       */
+
+      let mime = 'image/jpeg';
+
+
+      if (
+        bytes[0] === 0x89 &&
+        bytes[1] === 0x50 &&
+        bytes[2] === 0x4e &&
+        bytes[3] === 0x47
+      ) {
+
+        mime = 'image/png';
+
+      } else if (
+        bytes[0] === 0xff &&
+        bytes[1] === 0xd8
+      ) {
+
+        mime = 'image/jpeg';
+
+      } else if (
+        bytes[0] === 0x47 &&
+        bytes[1] === 0x49 &&
+        bytes[2] === 0x46
+      ) {
+
+        mime = 'image/gif';
+
+      }
+
+
+      const blob =
+        new Blob(
+          [bytes],
+          { type: mime }
+        );
+
+
+      const objectUrl =
+        URL.createObjectURL(blob);
+
+
+      const previousUrl =
+        cameraImage.dataset.objectUrl;
+
+
+      cameraImage.src =
+        objectUrl;
+
+      cameraImage.dataset.objectUrl =
+        objectUrl;
+
+
+      if (previousUrl) {
+
+        URL.revokeObjectURL(
+          previousUrl
+        );
+
+      }
+
+
+      frameReady();
+
+    } catch (err) {
+
+      console.error(
+        '[Camera] Cannot display frame:',
+        err
+      );
+
+    }
+
+  }
+
+
+  function frameReady() {
+
+    cameraImage.style.display =
+      'block';
+
+    loading.classList.add(
+      'hidden'
+    );
+
+    noFrame.style.display =
+      'none';
+
+    hideError();
+
+    setStatus(
+      'connected',
+      'LIVE'
+    );
+
+  }
+
+
+  // --------------------------------------------------
+  // Status
+  // --------------------------------------------------
+
+  function setStatus(type, text) {
+
+    status.className =
+      'status ' + type;
+
+    statusText.textContent =
+      text;
+
+  }
+
+
+  // --------------------------------------------------
+  // Errors
+  // --------------------------------------------------
+
+  function showError(message) {
+
+    errorText.textContent =
+      message;
+
+    error.classList.add(
+      'visible'
+    );
+
+    loading.classList.add(
+      'hidden'
+    );
+
+    setStatus(
+      'error',
+      'Помилка'
+    );
+
+  }
+
+
+  function hideError() {
+
+    error.classList.remove(
+      'visible'
+    );
+
+  }
+
+
+  // --------------------------------------------------
+  // Refresh
+  // --------------------------------------------------
+
+  refreshButton.addEventListener(
+    'click',
+    () => {
+
+      manuallyClosed = true;
+
+      if (socket) {
+
+        try {
+          socket.close();
+        } catch (_) {}
+
+      }
+
+      setTimeout(() => {
+
+        connect();
+
+      }, 200);
+
+    }
+  );
+
+
+  // --------------------------------------------------
+  // Start
+  // --------------------------------------------------
+
+  connect();
+
+</script>
+
+</body>
+</html>

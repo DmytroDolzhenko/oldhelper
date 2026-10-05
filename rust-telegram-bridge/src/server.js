@@ -3,6 +3,7 @@ import { existsSync, promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import { WebSocketServer } from 'ws'; // Додано для стрімінгу камер
 import { createStorageFromEnv } from './storage.js';
 import { Telegram, escapeHtml } from './telegram.js';
 import { RustPlusManager } from './rustplus-listener.js';
@@ -42,7 +43,7 @@ const rustPlus = new RustPlusManager({
 });
 
 async function handleTelegramUpdate(update) {
-  // 1. Обробка натискань на Inline-кнопки
+  // 1. Обробка натискань на Inline-кнопки (Перемикачі)
   if (update.callback_query) {
     const cb = update.callback_query;
     const data = cb.data || '';
@@ -77,6 +78,14 @@ async function handleTelegramUpdate(update) {
   const text = message.text || '';
   const name = [chat.first_name, chat.last_name].filter(Boolean).join(' ') || chat.username || chat.title || chatId;
 
+  // Головне меню з двома кнопками
+  const mainMenuKeyboard = {
+    keyboard: [
+      [{ text: '🔌 Перемикачі' }, { text: '📹 Камери' }]
+    ],
+    resize_keyboard: true
+  };
+
   if (text.startsWith('/stop')) {
     await storage.update((state) => {
       const subscriber = state.subscribers.find((item) => item.chatId === chatId);
@@ -98,21 +107,15 @@ async function handleTelegramUpdate(update) {
       }
     });
 
-    const mainMenuKeyboard = {
-      keyboard: [
-        [{ text: '🔌 Перемикачі' }]
-      ],
-      resize_keyboard: true
-    };
-
     await telegram.sendMessage(
       chatId,
-      'Готово. Цей чат отримуватиме Rust+ сповіщення від bridge.\n\nКористуйся меню нижче для керування пристроями:',
+      'Готово. Цей чат отримуватиме Rust+ сповіщення від bridge.\n\nКористуйся меню нижче для керування системою:',
       { reply_markup: JSON.stringify(mainMenuKeyboard) }
     );
     return;
   }
 
+  // --- МЕНЮ ПЕРЕМИКАЧІВ ---
   if (text.startsWith('/switches') || text === '🔌 Перемикачі') {
     const state = await storage.read();
     const allEntities = state.servers.flatMap((s) => s.entities || []);
@@ -128,7 +131,73 @@ async function handleTelegramUpdate(update) {
     return;
   }
 
-  await telegram.sendMessage(chatId, 'Доступні команди:\n/switches або "🔌 Перемикачі" — Меню керування\n/start — Підписатися\n/stop — Відписатися');
+  // --- ДОДАВАННЯ КАМЕРИ ---
+  if (text.startsWith('/addcam ')) {
+    const parts = text.trim().split(' ').slice(1);
+    const camId = parts[0]; 
+    const camName = parts.slice(1).join(' ') || camId; 
+
+    if (!camId) {
+      return await telegram.sendMessage(chatId, '⚠️ Використання: `/addcam [ID_КАМЕРИ] [Назва]`\nНаприклад: `/addcam Roof Дах бази`');
+    }
+
+    await storage.update((state) => {
+      const server = state.servers.find(s => s.enabled);
+      if (server) {
+        if (!server.cameras) server.cameras = [];
+        server.cameras = server.cameras.filter(c => c.id !== camId);
+        server.cameras.push({ id: camId, name: camName });
+      }
+    });
+    
+    // Виправлений рядок без використання зворотних лапок для уникнення помилок парсера VS Code
+    const successMsg = '✅ Камеру **' + escapeHtml(camName) + '** (ID: `' + escapeHtml(camId) + '`) успішно додано!';
+    return await telegram.sendMessage(chatId, successMsg, { reply_markup: JSON.stringify(mainMenuKeyboard) });
+  }
+
+  // --- ВИДАЛЕННЯ КАМЕРИ ---
+  if (text.startsWith('/delcam ')) {
+    const camId = text.split(' ')[1];
+    if (!camId) {
+      return await telegram.sendMessage(chatId, '⚠ Вкажіть ID камери. Наприклад: `/delcam Roof`');
+    }
+
+    await storage.update((state) => {
+      const server = state.servers.find(s => s.enabled);
+      if (server && server.cameras) {
+        server.cameras = server.cameras.filter(c => c.id !== camId);
+      }
+    });
+    return await telegram.sendMessage(chatId, `🗑 Камеру **${escapeHtml(camId)}** видалено зі списку.`);
+  }
+
+  // --- СПИСОК КАМЕР ТА WEB APP ---
+  if (text.startsWith('/cameras') || text === '📹 Камери') {
+    const state = await storage.read();
+    const server = state.servers.find(s => s.enabled);
+    
+    if (!server) return await telegram.sendMessage(chatId, 'Немає активних серверів. Додайте сервер на сайті.');
+
+    const cameras = server.cameras || [];
+    if (cameras.length === 0) {
+      return await telegram.sendMessage(chatId, 'У вас ще немає збережених камер.\nДодайте першу командою:\n`/addcam [ID_КАМЕРИ] [Бажана Назва]`\n\n*Приклад: /addcam Compaund1 Двір 1*');
+    }
+
+    const publicUrl = process.env.PUBLIC_URL?.replace(/\/$/, '');
+    if (!publicUrl) return await telegram.sendMessage(chatId, 'Помилка: PUBLIC_URL не налаштовано в .env.');
+
+    // Формуємо кнопки для Telegram Mini App
+    const inline_keyboard = cameras.map(cam => ([{
+      text: `📹 ${cam.name}`,
+      web_app: { url: `\({publicUrl}/camera.html?serverId=\){server.id}&camera=${encodeURIComponent(cam.id)}` }
+    }]));
+
+    return await telegram.sendMessage(chatId, '📹 **Оберіть камеру для перегляду LIVE:**\n*(Для видалення: /delcam ID)*', {
+      reply_markup: JSON.stringify({ inline_keyboard })
+    });
+  }
+
+  await telegram.sendMessage(chatId, 'Доступні команди:\n/start — Меню\n🔌 Перемикачі — Керування девайсами\n📹 Камери — Перегляд CCTV\n/addcam [ID] [Назва] — Додати камеру');
 }
 
 function send(res, status, body, headers = {}) {
@@ -162,7 +231,8 @@ function sanitizeServer(input) {
       name: String(entity.name || ''),
       enabled: Boolean(entity.enabled),
       onlyWhenActive: entity.onlyWhenActive !== false
-    })).filter((entity) => entity.id)
+    })).filter((entity) => entity.id),
+    cameras: input.cameras || [] // Зберігаємо список камер
   };
 }
 
@@ -179,8 +249,12 @@ async function routeApi(req, res, url) {
     await storage.update((state) => {
       const server = sanitizeServer(payload);
       const index = state.servers.findIndex((item) => item.id === server.id);
-      if (index >= 0) state.servers[index] = server;
-      else state.servers.push(server);
+      if (index >= 0) {
+        server.cameras = state.servers[index].cameras || []; // Не затираємо камери при оновленні з сайту
+        state.servers[index] = server;
+      } else {
+        state.servers.push(server);
+      }
     });
     await rustPlus.sync();
     return send(res, 200, { ok: true });
@@ -289,6 +363,58 @@ const server = http.createServer(async (req, res) => {
     send(res, 500, { error: error.message });
   }
 });
+
+// --- WEBSOCKET SERVER ДЛЯ СТРІМІНГУ КАМЕР ---
+const wss = new WebSocketServer({ server });
+
+wss.on('connection', (ws, req) => {
+  const query = req.url.split('?')[1] || '';
+  const urlParams = new URLSearchParams(query);
+  const cameraName = urlParams.get('camera');
+  const serverId = urlParams.get('serverId');
+
+  if (!cameraName || !serverId) {
+    ws.close(1008, 'Missing parameters');
+    return;
+  }
+
+  const record = rustPlus.clients.get(serverId);
+  if (!record || record.status !== 'connected') {
+    ws.close(1011, 'Rust+ server not connected');
+    return;
+  }
+
+  const rustClient = record.client;
+
+  rustClient.subscribeToCamera(cameraName, (err) => {
+    if (err && ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({ type: 'error', message: err.message }));
+    }
+  });
+
+  const onCameraFrame = (frame) => {
+    if (ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({ type: 'frame', data: frame }));
+    }
+  };
+
+  rustClient.on('cameraFrame', onCameraFrame);
+
+  ws.on('message', (message) => {
+    try {
+      const data = JSON.parse(message);
+      if (data.type === 'input' && rustClient.sendCameraInput) {
+        rustClient.sendCameraInput(data.buttons, data.x, data.y);
+      }
+    } catch (e) {}
+  });
+
+  ws.on('close', () => {
+    rustClient.removeListener('cameraFrame', onCameraFrame);
+    rustClient.unsubscribeFromCamera?.();
+  });
+});
+// --- END WEBSOCKET SERVER ---
 
 server.listen(port, () => {
   console.log(`Rust Telegram Bridge listening on :${port}`);
