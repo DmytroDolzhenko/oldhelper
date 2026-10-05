@@ -187,14 +187,12 @@ async function handleTelegramUpdate(update) {
     if (!publicUrl) return await telegram.sendMessage(chatId, 'Помилка: PUBLIC_URL не налаштовано в .env.');
 
     // Формуємо кнопки для Telegram Mini App
-    const inline_keyboard = cameras.map(cam => ([{
+    const inline_keyboard = cameras.map((cam) => ([{
       text: `📹 ${cam.name}`,
-      web_app: { url: `\({publicUrl}/camera.html?serverId=\){server.id}&camera=${encodeURIComponent(cam.id)}` }
+      web_app: {
+        url: `${publicUrl}/camera.html?serverId=${encodeURIComponent(server.id)}&camera=${encodeURIComponent(cam.id)}`
+      }
     }]));
-
-    return await telegram.sendMessage(chatId, '📹 **Оберіть камеру для перегляду LIVE:**\n*(Для видалення: /delcam ID)*', {
-      reply_markup: JSON.stringify({ inline_keyboard })
-    });
   }
 
   await telegram.sendMessage(chatId, 'Доступні команди:\n/start — Меню\n🔌 Перемикачі — Керування девайсами\n📹 Камери — Перегляд CCTV\n/addcam [ID] [Назва] — Додати камеру');
