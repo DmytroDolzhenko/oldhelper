@@ -1040,23 +1040,16 @@ wss.on(
     const rustClient =
       record.client;
 
-    rustClient.subscribeToCamera(
-      cameraName,
-      (err) => {
-        if (
-          err &&
-          ws.readyState === ws.OPEN
-        ) {
-          ws.send(
-            JSON.stringify({
-              type: 'error',
-              message:
-                err.message
-            })
-          );
+    rustClient.subscribeToCamera(cameraName, (err) => {
+        if (err) {
+          console.error(`[Camera Error] Не вдалося підписатися на ${cameraName}:`, err);
+          if (ws.readyState === ws.OPEN) {
+            ws.send(JSON.stringify({ type: 'error', message: err.message || 'Помилка підключення до камери' }));
+          }
+        } else {
+          console.log(`[Camera] Успішно підписано на камеру: ${cameraName}`);
         }
-      }
-    );
+      });
 
     const onCameraFrame =
       (frame) => {
