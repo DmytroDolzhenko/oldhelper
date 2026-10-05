@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/storage.js && node --check src/rustplus-listener.js && node --check src/telegram.js"
+    "check": "node --check src/server.js && node --check src/storage.js && node --check src/rustplus-listener.js && node --check src/telegram.js",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@liamcottle/rustplus.js": "^2.5.0",
