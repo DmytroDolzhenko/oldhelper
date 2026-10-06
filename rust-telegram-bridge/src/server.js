@@ -1077,20 +1077,24 @@ wss.on(
       );
     });
 
-    const onCameraFrame =
-      (frame) => {
-        if (
-          ws.readyState ===
-          ws.OPEN
-        ) {
-          ws.send(
-            JSON.stringify({
-              type: 'frame',
-              data: frame
-            })
-          );
-        }
-      };
+    const onCameraFrame = (frame) => {
+      console.log('[Camera Frame] отримано:', {
+        type: typeof frame,
+        isBuffer: Buffer.isBuffer(frame),
+        constructor: frame?.constructor?.name,
+        length: frame?.length,
+        keys: frame && typeof frame === 'object'
+          ? Object.keys(frame)
+          : []
+      });
+
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'frame',
+          data: frame
+        }));
+      }
+    };
 
     rustClient.on(
       'cameraFrame',
