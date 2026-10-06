@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
+
 import { createStorageFromEnv } from './storage.js';
 import { Telegram, escapeHtml } from './telegram.js';
 import { RustPlusManager } from './rustplus-listener.js';
@@ -48,8 +49,10 @@ loadDotEnv();
 
 const port = Number(process.env.PORT || 3000);
 const telegramMode = process.env.TELEGRAM_MODE || 'polling';
+
 let pollingOffset =
   Number(process.env.TELEGRAM_POLLING_OFFSET || 0) || undefined;
+
 let pollingRunning = false;
 
 const storage = createStorageFromEnv();
@@ -65,7 +68,13 @@ const rustPlus = new RustPlusManager({
     process.env.ALERT_COOLDOWN_SECONDS || 60
 });
 
+
+// ==========================================
+// TELEGRAM UPDATE HANDLER
+// ==========================================
+
 async function handleTelegramUpdate(update) {
+
   // ==========================================
   // CALLBACK QUERY
   // ==========================================
@@ -76,7 +85,11 @@ async function handleTelegramUpdate(update) {
 
     if (data.startsWith('sw_')) {
       const isTurnOn = data.startsWith('sw_on_');
-      const entityId = data.replace(/^sw_(on|off)_/, '');
+
+      const entityId = data.replace(
+        /^sw_(on|off)_/,
+        ''
+      );
 
       try {
         await rustPlus.setSmartSwitchState(
@@ -87,10 +100,14 @@ async function handleTelegramUpdate(update) {
         await telegram.answerCallbackQuery(
           cb.id,
           `Пристрій ${
-            isTurnOn ? 'увімкнено 🟢' : 'вимкнено 🔴'
+            isTurnOn
+              ? 'увімкнено 🟢'
+              : 'вимкнено 🔴'
           }!`
         );
+
       } catch (err) {
+
         await telegram.answerCallbackQuery(
           cb.id,
           `Помилка: ${err.message}`,
@@ -101,6 +118,7 @@ async function handleTelegramUpdate(update) {
 
     return;
   }
+
 
   // ==========================================
   // TEXT COMMANDS
@@ -115,12 +133,16 @@ async function handleTelegramUpdate(update) {
   const text = message.text || '';
 
   const name =
-    [chat.first_name, chat.last_name]
+    [
+      chat.first_name,
+      chat.last_name
+    ]
       .filter(Boolean)
       .join(' ') ||
     chat.username ||
     chat.title ||
     chatId;
+
 
   // ==========================================
   // MAIN MENU
@@ -136,15 +158,20 @@ async function handleTelegramUpdate(update) {
     resize_keyboard: true
   };
 
+
   // ==========================================
   // STOP
   // ==========================================
 
   if (text.startsWith('/stop')) {
+
     await storage.update((state) => {
-      const subscriber = state.subscribers.find(
-        (item) => item.chatId === chatId
-      );
+
+      const subscriber =
+        state.subscribers.find(
+          (item) =>
+            item.chatId === chatId
+        );
 
       if (subscriber) {
         subscriber.enabled = false;
@@ -159,27 +186,38 @@ async function handleTelegramUpdate(update) {
     return;
   }
 
+
   // ==========================================
   // START
   // ==========================================
 
   if (text.startsWith('/start')) {
+
     await storage.update((state) => {
-      const existing = state.subscribers.find(
-        (item) => item.chatId === chatId
-      );
+
+      const existing =
+        state.subscribers.find(
+          (item) =>
+            item.chatId === chatId
+        );
 
       if (existing) {
+
         existing.enabled = true;
         existing.name = name;
-        existing.lastSeenAt = new Date().toISOString();
+        existing.lastSeenAt =
+          new Date().toISOString();
+
       } else {
+
         state.subscribers.push({
           chatId,
           name,
           enabled: true,
-          createdAt: new Date().toISOString()
+          createdAt:
+            new Date().toISOString()
         });
+
       }
     });
 
@@ -187,14 +225,16 @@ async function handleTelegramUpdate(update) {
       chatId,
       'Готово. Цей чат отримуватиме Rust+ сповіщення від bridge.\n\nКористуйся меню нижче для керування системою:',
       {
-        reply_markup: JSON.stringify(
-          mainMenuKeyboard
-        )
+        reply_markup:
+          JSON.stringify(
+            mainMenuKeyboard
+          )
       }
     );
 
     return;
   }
+
 
   // ==========================================
   // SWITCHES
@@ -204,13 +244,17 @@ async function handleTelegramUpdate(update) {
     text.startsWith('/switches') ||
     text.includes('Перемикачі')
   ) {
-    const state = await storage.read();
 
-    const allEntities = state.servers.flatMap(
-      (s) => s.entities || []
-    );
+    const state =
+      await storage.read();
+
+    const allEntities =
+      state.servers.flatMap(
+        (s) => s.entities || []
+      );
 
     if (!allEntities.length) {
+
       await telegram.sendMessage(
         chatId,
         'Не знайдено жодного збереженого пристрою у системі. Спочатку додайте його на сайті.'
@@ -220,6 +264,7 @@ async function handleTelegramUpdate(update) {
     }
 
     for (const entity of allEntities) {
+
       await rustPlus.sendSwitchControlMenu(
         chatId,
         entity.id,
@@ -230,28 +275,35 @@ async function handleTelegramUpdate(update) {
     return;
   }
 
+
   // ==========================================
   // ADD CAMERA
   // ==========================================
 
   if (text.startsWith('/addcam ')) {
+
     const parts = text.split(' ');
 
     const camId = parts[1];
+
     const camName =
-      parts.slice(2).join(' ') || camId;
+      parts.slice(2).join(' ') ||
+      camId;
 
     if (!camId) {
+
       return await telegram.sendMessage(
         chatId,
-        '⚠ Вкажіть ID камери.\nПриклад: `/addcam OILRIG1HELI Нафтовидобувна вежа`'
+        '⚠ Вкажіть ID камери.\nПриклад: /addcam OILRIG1HELI Нафтовидобувна вежа'
       );
     }
 
     await storage.update((state) => {
-      const server = state.servers.find(
-        (s) => s.enabled
-      );
+
+      const server =
+        state.servers.find(
+          (s) => s.enabled
+        );
 
       if (!server) return;
 
@@ -259,17 +311,22 @@ async function handleTelegramUpdate(update) {
         server.cameras = [];
       }
 
-      const existing = server.cameras.find(
-        (c) => c.id === camId
-      );
+      const existing =
+        server.cameras.find(
+          (c) => c.id === camId
+        );
 
       if (existing) {
+
         existing.name = camName;
+
       } else {
+
         server.cameras.push({
           id: camId,
           name: camName
         });
+
       }
     });
 
@@ -281,6 +338,7 @@ async function handleTelegramUpdate(update) {
     );
   }
 
+
   // ==========================================
   // LIST CAMERAS
   // ==========================================
@@ -289,22 +347,28 @@ async function handleTelegramUpdate(update) {
     text.startsWith('/cameras') ||
     text === '📹 Камери'
   ) {
-    const state = await storage.read();
 
-    const server = state.servers.find(
-      (s) => s.enabled
-    );
+    const state =
+      await storage.read();
+
+    const server =
+      state.servers.find(
+        (s) => s.enabled
+      );
 
     if (!server) {
+
       return await telegram.sendMessage(
         chatId,
         'Немає активних серверів. Додайте сервер на сайті.'
       );
     }
 
-    const cameras = server.cameras || [];
+    const cameras =
+      server.cameras || [];
 
     if (cameras.length === 0) {
+
       return await telegram.sendMessage(
         chatId,
         'У вас ще немає збережених камер.\n\n' +
@@ -316,19 +380,25 @@ async function handleTelegramUpdate(update) {
     }
 
     const publicUrl =
-      process.env.PUBLIC_URL?.replace(/\/$/, '');
+      process.env.PUBLIC_URL?.replace(
+        /\/$/,
+        ''
+      );
 
     if (!publicUrl) {
+
       return await telegram.sendMessage(
         chatId,
         '❌ Помилка: PUBLIC_URL не налаштовано.'
       );
     }
 
-    const inline_keyboard = cameras.map(
-      (cam) => [
+    const inline_keyboard =
+      cameras.map((cam) => [
+
         {
           text: `📹 ${cam.name}`,
+
           web_app: {
             url:
               `${publicUrl}/camera.html` +
@@ -340,40 +410,51 @@ async function handleTelegramUpdate(update) {
               )}`
           }
         }
-      ]
-    );
+
+      ]);
 
     return await telegram.sendMessage(
       chatId,
       '📹 <b>Оберіть камеру для перегляду LIVE:</b>',
       {
-        reply_markup: JSON.stringify({
-          inline_keyboard
-        })
+        reply_markup:
+          JSON.stringify({
+            inline_keyboard
+          })
       }
     );
   }
+
 
   // ==========================================
   // DELETE CAMERA
   // ==========================================
 
   if (text.startsWith('/delcam ')) {
-    const camId = text.split(' ')[1];
+
+    const camId =
+      text.split(' ')[1];
 
     if (!camId) {
+
       return await telegram.sendMessage(
         chatId,
-        '⚠ Вкажіть ID камери. Наприклад: `/delcam Roof`'
+        '⚠ Вкажіть ID камери. Наприклад: /delcam Roof'
       );
     }
 
     await storage.update((state) => {
-      const server = state.servers.find(
-        (s) => s.enabled
-      );
 
-      if (server && server.cameras) {
+      const server =
+        state.servers.find(
+          (s) => s.enabled
+        );
+
+      if (
+        server &&
+        server.cameras
+      ) {
+
         server.cameras =
           server.cameras.filter(
             (c) => c.id !== camId
@@ -389,6 +470,7 @@ async function handleTelegramUpdate(update) {
     );
   }
 
+
   // ==========================================
   // UNKNOWN COMMAND
   // ==========================================
@@ -403,6 +485,7 @@ async function handleTelegramUpdate(update) {
   );
 }
 
+
 // ==========================================
 // HTTP HELPERS
 // ==========================================
@@ -413,6 +496,7 @@ function send(
   body,
   headers = {}
 ) {
+
   const isJson =
     typeof body !== 'string' &&
     !Buffer.isBuffer(body);
@@ -422,16 +506,19 @@ function send(
     : body;
 
   res.writeHead(status, {
-    'Content-Type': isJson
-      ? 'application/json; charset=utf-8'
-      : 'text/html; charset=utf-8',
+    'Content-Type':
+      isJson
+        ? 'application/json; charset=utf-8'
+        : 'text/html; charset=utf-8',
     ...headers
   });
 
   res.end(payload);
 }
 
+
 async function parseJson(req) {
+
   const chunks = [];
 
   for await (const chunk of req) {
@@ -443,67 +530,90 @@ async function parseJson(req) {
   }
 
   return JSON.parse(
-    Buffer.concat(chunks).toString('utf8')
+    Buffer.concat(chunks)
+      .toString('utf8')
   );
 }
+
 
 // ==========================================
 // SERVER SANITIZATION
 // ==========================================
 
 function sanitizeServer(input) {
+
   return {
-    id: input.id || crypto.randomUUID(),
 
-    name: String(
-      input.name || 'Rust server'
-    ),
+    id:
+      input.id ||
+      crypto.randomUUID(),
 
-    ip: String(input.ip || ''),
-
-    port: Number(
-      input.port || 28082
-    ),
-
-    playerId: String(
-      input.playerId || ''
-    ),
-
-    playerToken: String(
-      input.playerToken || ''
-    ),
-
-    enabled: Boolean(
-      input.enabled
-    ),
-
-    entities: (
-      input.entities || []
-    )
-      .map((entity) => ({
-        id: String(
-          entity.id || ''
-        ),
-
-        name: String(
-          entity.name || ''
-        ),
-
-        enabled: Boolean(
-          entity.enabled
-        ),
-
-        onlyWhenActive:
-          entity.onlyWhenActive !== false
-      }))
-      .filter(
-        (entity) => entity.id
+    name:
+      String(
+        input.name ||
+        'Rust server'
       ),
+
+    ip:
+      String(
+        input.ip || ''
+      ),
+
+    port:
+      Number(
+        input.port || 28082
+      ),
+
+    playerId:
+      String(
+        input.playerId || ''
+      ),
+
+    playerToken:
+      String(
+        input.playerToken || ''
+      ),
+
+    enabled:
+      Boolean(
+        input.enabled
+      ),
+
+    entities:
+      (
+        input.entities || []
+      )
+        .map((entity) => ({
+
+          id:
+            String(
+              entity.id || ''
+            ),
+
+          name:
+            String(
+              entity.name || ''
+            ),
+
+          enabled:
+            Boolean(
+              entity.enabled
+            ),
+
+          onlyWhenActive:
+            entity.onlyWhenActive !== false
+
+        }))
+        .filter(
+          (entity) =>
+            entity.id
+        ),
 
     cameras:
       input.cameras || []
   };
 }
+
 
 // ==========================================
 // API ROUTES
@@ -514,11 +624,15 @@ async function routeApi(
   res,
   url
 ) {
+
+  // ==========================================
   // HEALTH
+  // ==========================================
 
   if (
     url.pathname === '/health'
   ) {
+
     return send(
       res,
       200,
@@ -526,18 +640,23 @@ async function routeApi(
         ok: true,
         telegramMode,
         pollingRunning,
+
         rustPlus:
           rustPlus.statuses()
       }
     );
   }
 
+
+  // ==========================================
   // STATE
+  // ==========================================
 
   if (
     url.pathname === '/api/state' &&
     req.method === 'GET'
   ) {
+
     const state =
       await storage.read();
 
@@ -548,23 +667,29 @@ async function routeApi(
         ...state,
         telegramMode,
         pollingRunning,
+
         rustPlus:
           rustPlus.statuses()
       }
     );
   }
 
+
+  // ==========================================
   // ADD / UPDATE SERVER
+  // ==========================================
 
   if (
     url.pathname === '/api/servers' &&
     req.method === 'POST'
   ) {
+
     const payload =
       await parseJson(req);
 
     await storage.update(
       (state) => {
+
         const server =
           sanitizeServer(
             payload
@@ -577,13 +702,16 @@ async function routeApi(
           );
 
         if (index >= 0) {
+
           server.cameras =
             state.servers[index]
               .cameras || [];
 
           state.servers[index] =
             server;
+
         } else {
+
           state.servers.push(
             server
           );
@@ -596,11 +724,16 @@ async function routeApi(
     return send(
       res,
       200,
-      { ok: true }
+      {
+        ok: true
+      }
     );
   }
 
+
+  // ==========================================
   // DELETE SERVER
+  // ==========================================
 
   if (
     url.pathname.startsWith(
@@ -608,6 +741,7 @@ async function routeApi(
     ) &&
     req.method === 'DELETE'
   ) {
+
     const id =
       decodeURIComponent(
         url.pathname
@@ -617,6 +751,7 @@ async function routeApi(
 
     await storage.update(
       (state) => {
+
         state.servers =
           state.servers.filter(
             (server) =>
@@ -630,22 +765,29 @@ async function routeApi(
     return send(
       res,
       200,
-      { ok: true }
+      {
+        ok: true
+      }
     );
   }
 
+
+  // ==========================================
   // UPDATE SUBSCRIBER
+  // ==========================================
 
   if (
     url.pathname ===
       '/api/subscribers' &&
     req.method === 'PATCH'
   ) {
+
     const payload =
       await parseJson(req);
 
     await storage.update(
       (state) => {
+
         const subscriber =
           state.subscribers.find(
             (item) =>
@@ -656,6 +798,7 @@ async function routeApi(
           );
 
         if (subscriber) {
+
           subscriber.enabled =
             Boolean(
               payload.enabled
@@ -667,17 +810,23 @@ async function routeApi(
     return send(
       res,
       200,
-      { ok: true }
+      {
+        ok: true
+      }
     );
   }
 
+
+  // ==========================================
   // SET TELEGRAM WEBHOOK
+  // ==========================================
 
   if (
     url.pathname ===
       '/api/telegram/webhook' &&
     req.method === 'POST'
   ) {
+
     const publicUrl =
       process.env.PUBLIC_URL?.replace(
         /\/$/,
@@ -685,6 +834,7 @@ async function routeApi(
       );
 
     if (!publicUrl) {
+
       return send(
         res,
         400,
@@ -703,6 +853,7 @@ async function routeApi(
         '127.0.0.1'
       )
     ) {
+
       return send(
         res,
         400,
@@ -719,7 +870,9 @@ async function routeApi(
 
     await storage.update(
       (state) => {
-        state.settings.telegramWebhookConfiguredAt =
+
+        state.settings
+          .telegramWebhookConfiguredAt =
           new Date().toISOString();
       }
     );
@@ -727,46 +880,61 @@ async function routeApi(
     return send(
       res,
       200,
-      { ok: true }
+      {
+        ok: true
+      }
     );
   }
 
+
+  // ==========================================
   // WEBHOOK INFO
+  // ==========================================
 
   if (
     url.pathname ===
       '/api/telegram/webhook-info' &&
     req.method === 'GET'
   ) {
+
     return send(
       res,
       200,
       {
         ok: true,
+
         webhook:
           await telegram.getWebhookInfo()
       }
     );
   }
 
+
+  // ==========================================
   // DELETE WEBHOOK
+  // ==========================================
 
   if (
     url.pathname ===
       '/api/telegram/delete-webhook' &&
     req.method === 'POST'
   ) {
+
     await telegram.deleteWebhook();
 
     return send(
       res,
       200,
-      { ok: true }
+      {
+        ok: true
+      }
     );
   }
 
+
   return false;
 }
+
 
 // ==========================================
 // TELEGRAM WEBHOOK
@@ -776,6 +944,7 @@ async function routeTelegram(
   req,
   res
 ) {
+
   const update =
     await parseJson(req);
 
@@ -786,15 +955,19 @@ async function routeTelegram(
   return send(
     res,
     200,
-    { ok: true }
+    {
+      ok: true
+    }
   );
 }
+
 
 // ==========================================
 // TELEGRAM POLLING
 // ==========================================
 
 async function startTelegramPolling() {
+
   if (
     !telegram.enabled() ||
     telegramMode !== 'polling'
@@ -818,7 +991,9 @@ async function startTelegramPolling() {
   );
 
   while (pollingRunning) {
+
     try {
+
       const updates =
         await telegram.getUpdates({
           offset: pollingOffset,
@@ -826,6 +1001,7 @@ async function startTelegramPolling() {
         });
 
       for (const update of updates) {
+
         pollingOffset =
           update.update_id + 1;
 
@@ -833,7 +1009,9 @@ async function startTelegramPolling() {
           update
         );
       }
+
     } catch (error) {
+
       console.error(
         'Telegram polling failed:',
         error.message
@@ -841,11 +1019,15 @@ async function startTelegramPolling() {
 
       await new Promise(
         (resolve) =>
-          setTimeout(resolve, 5000)
+          setTimeout(
+            resolve,
+            5000
+          )
       );
     }
   }
 }
+
 
 // ==========================================
 // STATIC FILES
@@ -856,6 +1038,7 @@ async function serveStatic(
   res,
   url
 ) {
+
   const fileName =
     url.pathname === '/'
       ? 'index.html'
@@ -872,6 +1055,7 @@ async function serveStatic(
       publicDir
     )
   ) {
+
     return send(
       res,
       403,
@@ -880,6 +1064,7 @@ async function serveStatic(
   }
 
   try {
+
     const body =
       await fs.readFile(
         filePath
@@ -900,7 +1085,9 @@ async function serveStatic(
         'Content-Type': type
       }
     );
+
   } catch {
+
     send(
       res,
       404,
@@ -909,6 +1096,7 @@ async function serveStatic(
   }
 }
 
+
 // ==========================================
 // HTTP SERVER
 // ==========================================
@@ -916,22 +1104,36 @@ async function serveStatic(
 const server =
   http.createServer(
     async (req, res) => {
+
       try {
-        const url = new URL(
-          req.url,
-          `http://${req.headers.host}`
-        );
+
+        const url =
+          new URL(
+            req.url,
+            `http://${req.headers.host}`
+          );
+
+
+        // ====================================
+        // TELEGRAM WEBHOOK
+        // ====================================
 
         if (
           url.pathname ===
             '/telegram/webhook' &&
           req.method === 'POST'
         ) {
+
           return await routeTelegram(
             req,
             res
           );
         }
+
+
+        // ====================================
+        // API
+        // ====================================
 
         if (
           url.pathname.startsWith(
@@ -939,6 +1141,7 @@ const server =
           ) ||
           url.pathname === '/health'
         ) {
+
           const handled =
             await routeApi(
               req,
@@ -947,6 +1150,7 @@ const server =
             );
 
           if (handled === false) {
+
             return send(
               res,
               404,
@@ -960,12 +1164,19 @@ const server =
           return;
         }
 
+
+        // ====================================
+        // STATIC
+        // ====================================
+
         await serveStatic(
           req,
           res,
           url
         );
+
       } catch (error) {
+
         console.error(error);
 
         send(
@@ -980,6 +1191,7 @@ const server =
     }
   );
 
+
 // ==========================================
 // WEBSOCKET SERVER
 // ДЛЯ СТРІМІНГУ КАМЕР
@@ -990,16 +1202,16 @@ const wss =
     server
   });
 
+
 wss.on(
   'connection',
   (ws, req) => {
+
     const query =
       req.url.split('?')[1] || '';
 
     const urlParams =
-      new URLSearchParams(
-        query
-      );
+      new URLSearchParams(query);
 
     const cameraName =
       urlParams.get('camera');
@@ -1007,10 +1219,16 @@ wss.on(
     const serverId =
       urlParams.get('serverId');
 
+
+    // ========================================
+    // VALIDATION
+    // ========================================
+
     if (
       !cameraName ||
       !serverId
     ) {
+
       ws.close(
         1008,
         'Missing parameters'
@@ -1019,6 +1237,11 @@ wss.on(
       return;
     }
 
+
+    // ========================================
+    // RUST+ CONNECTION
+    // ========================================
+
     const record =
       rustPlus.clients.get(
         serverId
@@ -1026,9 +1249,13 @@ wss.on(
 
     if (
       !record ||
-      record.status !==
-        'connected'
+      record.status !== 'connected'
     ) {
+
+      console.error(
+        `[Camera Error] Rust+ сервер ${serverId} не підключений`
+      );
+
       ws.close(
         1011,
         'Rust+ server not connected'
@@ -1037,105 +1264,329 @@ wss.on(
       return;
     }
 
+
     const rustClient =
       record.client;
 
-    rustClient.subscribeToCamera(cameraName, (message) => {
-      const response = message?.response;
 
-      if (response?.error) {
-        const errorMessage =
-          response.error.error || 'Помилка підключення до камери';
+    console.log(
+      `[Camera] WebSocket підключено: server=${serverId}, camera=${cameraName}`
+    );
+
+
+    // ========================================
+    // CREATE CAMERA INSTANCE
+    // ========================================
+
+    let camera;
+
+    try {
+
+      /*
+       * rustplus.js має окремий Camera-клас.
+       *
+       * Він сам:
+       * - слухає cameraRays;
+       * - накопичує ray data;
+       * - декодує його;
+       * - генерує PNG;
+       * - викликає подію "render".
+       */
+
+      camera =
+        rustClient.getCamera(
+          cameraName
+        );
+
+    } catch (error) {
+
+      console.error(
+        `[Camera Error] Не вдалося створити Camera для ${cameraName}:`,
+        error
+      );
+
+      if (
+        ws.readyState === ws.OPEN
+      ) {
+
+        ws.send(
+          JSON.stringify({
+            type: 'error',
+            message:
+              error.message ||
+              'Не вдалося створити камеру'
+          })
+        );
+      }
+
+      return;
+    }
+
+
+    // ========================================
+    // RENDER EVENT
+    // ========================================
+
+    const onRender =
+      (image) => {
+
+        try {
+
+          if (
+            !Buffer.isBuffer(image)
+          ) {
+
+            console.warn(
+              `[Camera] ${cameraName}: render повернув не Buffer:`,
+              typeof image
+            );
+
+            return;
+          }
+
+
+          console.log(
+            `[Camera] Отримано готовий кадр ${cameraName}: ${image.length} bytes`
+          );
+
+
+          if (
+            ws.readyState !== ws.OPEN
+          ) {
+            return;
+          }
+
+
+          /*
+           * PNG Buffer -> Base64
+           *
+           * camera.html вже вміє
+           * перетворювати Base64 назад
+           * у зображення.
+           */
+
+          const base64 =
+            image.toString(
+              'base64'
+            );
+
+
+          ws.send(
+            JSON.stringify({
+              type: 'frame',
+              data: base64
+            })
+          );
+
+        } catch (error) {
+
+          console.error(
+            `[Camera Error] Помилка передачі кадру ${cameraName}:`,
+            error
+          );
+        }
+      };
+
+
+    camera.on(
+      'render',
+      onRender
+    );
+
+
+    // ========================================
+    // CAMERA EVENTS
+    // ========================================
+
+    camera.on(
+      'subscribing',
+      () => {
+
+        console.log(
+          `[Camera] Підписка на ${cameraName}...`
+        );
+      }
+    );
+
+
+    camera.on(
+      'subscribed',
+      () => {
+
+        const info =
+          camera.cameraSubscribeInfo;
+
+        console.log(
+          `[Camera] Успішно підписано на ${cameraName}: ` +
+          `${info?.width || '?'}x${info?.height || '?'}`
+        );
+      }
+    );
+
+
+    camera.on(
+      'unsubscribing',
+      () => {
+
+        console.log(
+          `[Camera] Відписка від ${cameraName}...`
+        );
+      }
+    );
+
+
+    camera.on(
+      'unsubscribed',
+      () => {
+
+        console.log(
+          `[Camera] Відписано від ${cameraName}`
+        );
+      }
+    );
+
+
+    // ========================================
+    // START CAMERA
+    // ========================================
+
+    camera
+      .subscribe()
+      .catch((error) => {
 
         console.error(
-          `[Camera Error] Не вдалося підписатися на ${cameraName}:`,
-          errorMessage
+          `[Camera Error] Не вдалося запустити ${cameraName}:`,
+          error
         );
 
-        if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({
-            type: 'error',
-            message: errorMessage
-          }));
+        if (
+          ws.readyState === ws.OPEN
+        ) {
+
+          ws.send(
+            JSON.stringify({
+              type: 'error',
+              message:
+                error.message ||
+                'Не вдалося підключити камеру'
+            })
+          );
         }
-
-        return;
-      }
-
-      if (response?.cameraSubscribeInfo) {
-        console.log(
-          `[Camera] Успішно підписано на ${cameraName}:`,
-          `${response.cameraSubscribeInfo.width}x${response.cameraSubscribeInfo.height}`
-        );
-
-        return;
-      }
-
-      console.warn(
-        `[Camera] Неочікувана відповідь при підписці на ${cameraName}:`,
-        message
-      );
-    });
-
-    const onCameraFrame = (frame) => {
-      console.log('[Camera Frame] отримано:', {
-        type: typeof frame,
-        isBuffer: Buffer.isBuffer(frame),
-        constructor: frame?.constructor?.name,
-        length: frame?.length,
-        keys: frame && typeof frame === 'object'
-          ? Object.keys(frame)
-          : []
       });
 
-      if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'frame',
-          data: frame
-        }));
-      }
-    };
 
-    rustClient.on(
-      'cameraFrame',
-      onCameraFrame
-    );
+    // ========================================
+    // CAMERA INPUT
+    // ========================================
 
     ws.on(
       'message',
-      (message) => {
+      async (message) => {
+
         try {
+
           const data =
-            JSON.parse(message);
+            JSON.parse(
+              message.toString()
+            );
+
 
           if (
-            data.type ===
-              'input' &&
-            rustClient.sendCameraInput
+            data.type !== 'input'
           ) {
-            rustClient.sendCameraInput(
-              data.buttons,
-              data.x,
-              data.y
-            );
+            return;
           }
-        } catch (e) {}
+
+
+          if (
+            typeof camera.move !==
+            'function'
+          ) {
+
+            return;
+          }
+
+
+          await camera.move(
+            Number(
+              data.buttons
+            ) || 0,
+
+            Number(
+              data.x
+            ) || 0,
+
+            Number(
+              data.y
+            ) || 0
+          );
+
+        } catch (error) {
+
+          console.error(
+            `[Camera] Помилка обробки input ${cameraName}:`,
+            error
+          );
+        }
       }
     );
 
+
+    // ========================================
+    // WEBSOCKET CLOSE
+    // ========================================
+
     ws.on(
       'close',
-      () => {
-        rustClient.removeListener(
-          'cameraFrame',
-          onCameraFrame
+      async () => {
+
+        console.log(
+          `[Camera] WebSocket закрито: server=${serverId}, camera=${cameraName}`
         );
 
-        rustClient.unsubscribeFromCamera?.();
+
+        try {
+
+          camera.removeListener(
+            'render',
+            onRender
+          );
+
+        } catch (_) {}
+
+
+        try {
+
+          await camera.unsubscribe();
+
+        } catch (error) {
+
+          console.error(
+            `[Camera] Помилка відписки від ${cameraName}:`,
+            error
+          );
+        }
+      }
+    );
+
+
+    // ========================================
+    // WEBSOCKET ERROR
+    // ========================================
+
+    ws.on(
+      'error',
+      (error) => {
+
+        console.error(
+          `[Camera] WebSocket error ${cameraName}:`,
+          error
+        );
       }
     );
   }
 );
+
 
 // ==========================================
 // START SERVER
@@ -1144,6 +1595,7 @@ wss.on(
 server.listen(
   port,
   () => {
+
     console.log(
       `Rust Telegram Bridge listening on :${port}`
     );
@@ -1152,35 +1604,47 @@ server.listen(
       '[Rust+] Initializing listener and syncing with database...'
     );
 
+
     rustPlus
       .sync()
-      .then(() =>
-        console.log(
-          '[Rust+] Initial sync complete.'
-        )
+      .then(
+        () =>
+          console.log(
+            '[Rust+] Initial sync complete.'
+          )
       )
-      .catch((error) =>
-        console.error(
-          '[Rust+] Sync failed on startup:',
-          error
-        )
+      .catch(
+        (error) =>
+          console.error(
+            '[Rust+] Sync failed on startup:',
+            error
+          )
       );
 
-    startTelegramPolling().catch(
-      (error) =>
-        console.error(
-          'Telegram polling crashed:',
-          error
-        )
-    );
+
+    startTelegramPolling()
+      .catch(
+        (error) =>
+          console.error(
+            'Telegram polling crashed:',
+            error
+          )
+      );
   }
 );
+
+
+// ==========================================
+// SHUTDOWN
+// ==========================================
 
 process.on(
   'SIGTERM',
   () => {
-    server.close(() =>
-      process.exit(0)
+
+    server.close(
+      () =>
+        process.exit(0)
     );
   }
 );
