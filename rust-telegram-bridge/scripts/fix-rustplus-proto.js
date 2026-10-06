@@ -12,16 +12,29 @@ if (!fs.existsSync(protoPath)) {
 
 let proto = fs.readFileSync(protoPath, 'utf8');
 
-proto = proto.replace(
-  'required float nearPlane = 3;',
-  'optional float nearPlane = 3;'
-);
+const replacements = [
+  {
+    from: 'required float nearPlane = 3;',
+    to: 'optional float nearPlane = 3;'
+  },
+  {
+    from: 'required int32 controlFlags = 5;',
+    to: 'optional int32 controlFlags = 5;'
+  },
+  {
+    from: 'required int32 sampleOffset = 2;',
+    to: 'optional int32 sampleOffset = 2;'
+  }
+];
 
-proto = proto.replace(
-  'required int32 controlFlags = 5;',
-  'optional int32 controlFlags = 5;'
-);
+for (const { from, to } of replacements) {
+  if (proto.includes(from)) {
+    proto = proto.replace(from, to);
+  }
+}
 
 fs.writeFileSync(protoPath, proto, 'utf8');
 
-console.log('RustPlus protobuf fixed: nearPlane/controlFlags are optional.');
+console.log(
+  'RustPlus protobuf fixed: nearPlane, controlFlags and sampleOffset are optional.'
+);
