@@ -12,29 +12,14 @@ if (!fs.existsSync(protoPath)) {
 
 let proto = fs.readFileSync(protoPath, 'utf8');
 
-const replacements = [
-  {
-    from: 'required float nearPlane = 3;',
-    to: 'optional float nearPlane = 3;'
-  },
-  {
-    from: 'required int32 controlFlags = 5;',
-    to: 'optional int32 controlFlags = 5;'
-  },
-  {
-    from: 'required int32 sampleOffset = 2;',
-    to: 'optional int32 sampleOffset = 2;'
-  }
-];
+const before = (proto.match(/\brequired\b/g) || []).length;
 
-for (const { from, to } of replacements) {
-  if (proto.includes(from)) {
-    proto = proto.replace(from, to);
-  }
-}
+proto = proto.replace(/\brequired\b/g, 'optional');
+
+const after = (proto.match(/\brequired\b/g) || []).length;
 
 fs.writeFileSync(protoPath, proto, 'utf8');
 
 console.log(
-  'RustPlus protobuf fixed: nearPlane, controlFlags and sampleOffset are optional.'
+  `RustPlus protobuf fixed: converted ${before - after} required fields to optional.`
 );
